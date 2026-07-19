@@ -114,6 +114,7 @@ export function InputScreen() {
       }
 
       const result = await res.json();
+      console.log("FULL AI RESPONSE:", result);
       setCurrentReport(result);
       setRemaining((r) => (r !== null ? Math.max(0, r - 1) : r));
       navigate("report");
