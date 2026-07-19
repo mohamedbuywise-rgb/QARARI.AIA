@@ -1,4 +1,5 @@
 import { logStep, logEnvPresence, loggedFetch, loggedJsonParse } from "./_logger.js";
+import { computeMarketPriceRange, formatMarketPriceContext, isSupportedCurrency } from "./_priceExtraction.js";
 
 // Shared Groq + Tavily calling logic, replacing Gemini + built-in search
 // grounding. Two-stage pipeline per call:
@@ -111,6 +112,18 @@ function buildSearchQuery(prompt: string): string {
   const single = prompt.match(/PRODUCT:\s*(.+)/i);
   const product = single ? single[1].trim() : prompt.slice(0, 200);
   return `${product} current market price pros and cons review`;
+}
+
+// Pulls the user's requested currency out of the single-product analyze.ts
+// prompt shape ("OFFERED PRICE: 5000 EGP"). Deliberately narrow: only fires
+// for that exact shape, so compare.ts's two-product prompt (which has no
+// marketFairPrice fields to fill in) and ask.ts (which never reaches this
+// function with useSearch=true) are completely unaffected.
+function extractTargetCurrency(prompt: string): string | null {
+  const match = prompt.match(/OFFERED PRICE:\s*[\d.,\s]+\s*([A-Za-z]{3})\b/);
+  if (!match) return null;
+  const code = match[1].toUpperCase();
+  return isSupportedCurrency(code) ? code : null;
 }
 
 function formatSearchContext(results: TavilyResult[], answer: string | null): string {
@@ -243,6 +256,39 @@ export async function callAiWithFallback(
       const { results, answer } = await searchTavily(query);
       searchContext = formatSearchContext(results, answer);
       searchQueryCount = 1; // one billed Tavily search call for this request
+
+      // Backend price extraction + currency conversion (see
+      // _priceExtraction.ts). Only fires for the single-product analyze.ts
+      // prompt shape and only when we actually found something to hand
+      // over — otherwise this is a no-op and behavior is unchanged.
+      const targetCurrency = extractTargetCurrency(prompt);
+      if (targetCurrency) {
+        try {
+          const priceRange = await computeMarketPriceRange(
+            results.map((r) => `${r.title} ${r.content}`),
+            targetCurrency
+          );
+          if (priceRange) {
+            console.log(
+              `[GroqTavily] Price extraction: found ${priceRange.sampleSize} price(s) in ${priceRange.sourceCurrency}` +
+                (priceRange.sourceCurrency !== priceRange.targetCurrency
+                  ? ` -> converted to ${priceRange.targetCurrency} (rate ${priceRange.rate})`
+                  : "") +
+                ` -> min ${priceRange.min}, mid ${priceRange.mid}, max ${priceRange.max} ${priceRange.targetCurrency}`
+            );
+            searchContext += formatMarketPriceContext(priceRange);
+          } else {
+            console.log("[GroqTavily] Price extraction: no usable price found in search results — leaving to model.");
+          }
+        } catch (priceErr: any) {
+          // Never let a price-extraction/conversion hiccup break the whole
+          // request — just fall back to the model's own reading of the raw
+          // search context, same as before this feature existed.
+          console.error("[GroqTavily] Price extraction/conversion failed:");
+          console.error(priceErr);
+          console.error(priceErr?.stack);
+        }
+      }
     } catch (e: any) {
       console.error("[GroqTavily] Tavily search failed — proceeding on the model's own knowledge only:");
       console.error(e);
