@@ -1,11 +1,20 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isValidAdmin } from "./_auth.js";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
+import { logRequestStart, logRequestSuccess, logUnhandledError } from "../_logger.js";
 
 const MONTHLY_PRICE = 149;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!isValidAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  const start = Date.now();
+  logRequestStart(req);
+
+  console.log("Checking authentication...");
+  if (!isValidAdmin(req)) {
+    console.warn("[/api/admin/metrics] Rejected — invalid admin credentials");
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  console.log("Authentication OK");
 
   const admin = getSupabaseAdmin();
   const now = new Date();
@@ -13,6 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   try {
+    console.log("Loading metrics (parallel Supabase queries)...");
     const [
       { count: totalUsers },
       { count: premiumUsers },
@@ -49,6 +59,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const conversionRate = totalUsers ? Number((((premiumUsers || 0) / totalUsers) * 100).toFixed(1)) : 0;
 
+    console.log("Returning response...");
+    logRequestSuccess(start);
     return res.status(200).json({
       totalUsers: totalUsers || 0,
       premiumUsers: premiumUsers || 0,
@@ -64,8 +76,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       approvedThisMonth: approvedThisMonth || 0,
       rejectedThisMonth: rejectedThisMonth || 0,
     });
-  } catch (err) {
-    console.error("[/api/admin/metrics] error:", err);
-    return res.status(500).json({ error: "server_error" });
+  } catch (err: any) {
+    logUnhandledError(err, start);
+    return res.status(500).json({ error: "server_error", message: err?.message, stack: err?.stack });
   }
 }

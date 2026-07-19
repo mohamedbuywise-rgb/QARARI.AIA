@@ -1,3 +1,5 @@
+import { logStep, logEnvPresence, loggedFetch, loggedJsonParse } from "./_logger.js";
+
 // Shared Groq + Tavily calling logic, replacing Gemini + built-in search
 // grounding. Two-stage pipeline per call:
 //   1. Tavily runs a live web search for the product (real pricing/pros/cons
@@ -38,36 +40,60 @@ interface TavilyResult {
 }
 
 async function searchTavily(query: string): Promise<{ results: TavilyResult[]; answer: string | null }> {
-  const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey) throw new Error("Missing TAVILY_API_KEY env var");
+  console.log("Calling Tavily...");
+  console.log("[Tavily] Query:", query);
 
-  const res = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Tavily's current auth scheme is a Bearer header (older docs show
-      // api_key in the JSON body — both still work, but Bearer is what
-      // Tavily's own docs lead with now).
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      query,
-      search_depth: "advanced", // better relevance for pricing/spec research than "basic"
-      max_results: 8,
-      include_answer: true,
-      include_raw_content: false,
-    }),
-  });
+  const apiKey = process.env.TAVILY_API_KEY;
+  logEnvPresence({ TAVILY_API_KEY: apiKey });
+  if (!apiKey) {
+    console.error("[Tavily] Missing TAVILY_API_KEY env var");
+    throw new Error("Missing TAVILY_API_KEY env var");
+  }
+
+  let res: Response;
+  try {
+    res = await loggedFetch("tavily.search", "https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Tavily's current auth scheme is a Bearer header (older docs show
+        // api_key in the JSON body — both still work, but Bearer is what
+        // Tavily's own docs lead with now).
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        query,
+        search_depth: "advanced", // better relevance for pricing/spec research than "basic"
+        max_results: 8,
+        include_answer: true,
+        include_raw_content: false,
+      }),
+    });
+  } catch (error: any) {
+    console.error("TAVILY ERROR");
+    console.error(error);
+    console.error(error?.stack);
+    throw error;
+  }
+
+  console.log("Status:", res.status);
 
   if (!res.ok) {
     const errText = await res.text();
+    console.error("[Tavily] Non-OK response body:", errText);
     throw new Error(`Tavily search error ${res.status}: ${errText}`);
   }
 
-  const json = await res.json();
+  const bodyText = await res.text();
+  console.log("Body:", bodyText.slice(0, 2000));
+
+  const json = loggedJsonParse("tavily.search", bodyText);
   const results: TavilyResult[] = Array.isArray(json?.results)
     ? json.results.map((r: any) => ({ title: r.title || "", url: r.url || "", content: r.content || "" }))
     : [];
+
+  console.log("[Tavily] Results count:", results.length);
+  console.log("Calling Tavily... done");
 
   return { results, answer: json?.answer || null };
 }
@@ -101,36 +127,63 @@ async function callGroqModel(
   systemPrompt: string,
   userPrompt: string
 ): Promise<{ text: string; usage: Omit<AiUsage, "searchQueryCount"> }> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("Missing GROQ_API_KEY env var");
+  console.log(`Calling Groq (${model})...`);
 
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.4,
-      // Groq's OpenAI-compatible JSON mode — equivalent to Gemini's
-      // responseMimeType: "application/json".
-      response_format: { type: "json_object" },
-    }),
-  });
+  const apiKey = process.env.GROQ_API_KEY;
+  logEnvPresence({ GROQ_API_KEY: apiKey });
+  if (!apiKey) {
+    console.error("[Groq] Missing GROQ_API_KEY env var");
+    throw new Error("Missing GROQ_API_KEY env var");
+  }
+
+  let res: Response;
+  try {
+    res = await loggedFetch(`groq.${model}`, "https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.4,
+        // Groq's OpenAI-compatible JSON mode — equivalent to Gemini's
+        // responseMimeType: "application/json".
+        response_format: { type: "json_object" },
+      }),
+    });
+  } catch (error: any) {
+    console.error(`GROQ ERROR (${model})`);
+    console.error(error);
+    console.error(error?.stack);
+    throw error;
+  }
+
+  console.log("Status:", res.status);
 
   if (!res.ok) {
     const errText = await res.text();
+    console.error(`[Groq] Non-OK response body (${model}):`, errText);
     throw new Error(`Groq ${model} error ${res.status}: ${errText}`);
   }
 
-  const json = await res.json();
+  const bodyText = await res.text();
+  const json = loggedJsonParse(`groq.${model}.envelope`, bodyText);
   const text = json?.choices?.[0]?.message?.content;
-  if (!text) throw new Error(`Groq ${model} returned no text content`);
+  if (!text) {
+    console.error(`[Groq] ${model} returned no text content. Full response:`, bodyText.slice(0, 2000));
+    throw new Error(`Groq ${model} returned no text content`);
+  }
+
+  console.log(`[Groq] ${model} raw content:`, text.slice(0, 2000));
+  console.log(
+    `[Groq] ${model} tokens — prompt: ${json?.usage?.prompt_tokens}, completion: ${json?.usage?.completion_tokens}, total: ${json?.usage?.total_tokens}`
+  );
+  console.log(`Calling Groq (${model})... done`);
 
   return {
     text,
@@ -143,9 +196,12 @@ async function callGroqModel(
 }
 
 function tryParseJson(text: string): any {
+  console.log("Parsing AI JSON...");
   // Strip markdown code fences if the model added them despite instructions
   const cleaned = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  return JSON.parse(cleaned);
+  const parsed = loggedJsonParse("ai.responseJson", cleaned);
+  console.log("Parsing AI JSON... done");
+  return parsed;
 }
 
 function isRateLimitError(err: unknown): boolean {
@@ -161,6 +217,9 @@ export async function callAiWithFallback(
   imageBase64?: { data: string; mimeType: string },
   useSearch: boolean = true
 ): Promise<{ data: any; modelUsed: string; usage: AiUsage; usedSearch: boolean }> {
+  logStep("callAiWithFallback START");
+  console.log("[GroqTavily] useSearch:", useSearch, "| hasImage:", !!imageBase64);
+
   if (imageBase64) {
     // Neither gpt-oss-120b nor gpt-oss-20b accept image input on Groq.
     // Gemini's flow supported photo-based analysis (e.g. a screenshot of a
@@ -184,8 +243,10 @@ export async function callAiWithFallback(
       const { results, answer } = await searchTavily(query);
       searchContext = formatSearchContext(results, answer);
       searchQueryCount = 1; // one billed Tavily search call for this request
-    } catch (e) {
-      console.error("[GroqTavily] Tavily search failed — proceeding on the model's own knowledge only:", e);
+    } catch (e: any) {
+      console.error("[GroqTavily] Tavily search failed — proceeding on the model's own knowledge only:");
+      console.error(e);
+      console.error(e?.stack);
       searchContext =
         "Live web search was unavailable for this request. Use your best general knowledge, and prefer a wider/more conservative price range since this isn't confirmed by live data.";
     }
@@ -199,33 +260,46 @@ export async function callAiWithFallback(
     : prompt;
 
   // 1. Try primary model
+  const primaryStart = Date.now();
   try {
     const { text, usage } = await callGroqModel(PRIMARY_MODEL, systemPrompt, userPrompt);
-    return {
+    const result = {
       data: tryParseJson(text),
       modelUsed: PRIMARY_MODEL,
       usage: { ...usage, searchQueryCount },
       usedSearch: useSearch,
     };
-  } catch (e1) {
-    console.error(`[GroqTavily] Primary model (${PRIMARY_MODEL}) failed:`, e1);
+    console.log(`[GroqTavily] Primary model (${PRIMARY_MODEL}) succeeded in ${Date.now() - primaryStart}ms`);
+    logStep("callAiWithFallback SUCCESS (primary)");
+    return result;
+  } catch (e1: any) {
+    console.error(`[GroqTavily] Primary model (${PRIMARY_MODEL}) failed after ${Date.now() - primaryStart}ms:`);
+    console.error(e1);
+    console.error(e1?.stack);
     if (isRateLimitError(e1)) {
       console.error("[GroqTavily] Primary hit its rate limit — going straight to fallback's separate quota.");
     }
   }
 
   // 2. Fall back to a different model — own quota bucket, silent to the user
+  const fallbackStart = Date.now();
   try {
     const strictSuffix = "\n\nCRITICAL: Return ONLY valid JSON. No markdown, no code fences, no text before or after the JSON object.";
     const { text, usage } = await callGroqModel(FALLBACK_MODEL, systemPrompt, userPrompt + strictSuffix);
-    return {
+    const result = {
       data: tryParseJson(text),
       modelUsed: FALLBACK_MODEL,
       usage: { ...usage, searchQueryCount },
       usedSearch: useSearch,
     };
-  } catch (e2) {
-    console.error(`[GroqTavily] Fallback model (${FALLBACK_MODEL}) also failed:`, e2);
+    console.log(`[GroqTavily] Fallback model (${FALLBACK_MODEL}) succeeded in ${Date.now() - fallbackStart}ms`);
+    logStep("callAiWithFallback SUCCESS (fallback)");
+    return result;
+  } catch (e2: any) {
+    console.error(`[GroqTavily] Fallback model (${FALLBACK_MODEL}) also failed after ${Date.now() - fallbackStart}ms:`);
+    console.error(e2);
+    console.error(e2?.stack);
+    logStep("callAiWithFallback FAILED (both models exhausted)");
     throw new Error("ai_unavailable");
   }
 }

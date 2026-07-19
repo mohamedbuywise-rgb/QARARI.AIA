@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
+import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
 const FREE_MONTHLY_LIMIT = 5;
 const PREMIUM_MONTHLY_LIMIT = 50; // fair-use cap for paid subscribers, prevents runaway AI cost from outlier usage
@@ -80,7 +81,17 @@ Rules:
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const start = Date.now();
+  logRequestStart(req);
+  logEnvPresence({
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+
   if (req.method !== "POST") {
+    console.warn("[/api/analyze] Rejected non-POST method:", req.method);
     return res.status(405).json({ error: "method_not_allowed" });
   }
 
@@ -97,18 +108,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       imageBase64, // optional: { data, mimeType }
     } = req.body || {};
 
+    console.log("[/api/analyze] Validating input...");
     if (!product || typeof product !== "string" || !offeredPrice || Number(offeredPrice) <= 0) {
+      console.warn("[/api/analyze] Invalid input:", { product, offeredPrice });
       return res.status(400).json({ error: "invalid_input" });
     }
+    console.log("[/api/analyze] Input OK. product:", product, "| offeredPrice:", offeredPrice, "| currency:", currency);
 
+    console.log("Checking authentication...");
     const admin = getSupabaseAdmin();
     const user = await getAuthedUser(req);
+    console.log("Authentication OK. Signed in:", !!user, user ? `(userId: ${user.id})` : "(guest)");
 
     let tier: "free" | "premium" = "free";
     let quotaOk = true;
 
     if (user) {
       // ---- SIGNED-IN USER: check/enforce quota tied to their account row ----
+      console.log("[/api/analyze] Loading user row for quota check...");
       const { data: userRow, error: userErr } = await admin
         .from("users")
         .select("tier, subscription_end_date, scans_used_this_month, scans_reset_at")
@@ -116,8 +133,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single();
 
       if (userErr || !userRow) {
+        console.error("[/api/analyze] user_not_found. Supabase error:", userErr);
         return res.status(404).json({ error: "user_not_found" });
       }
+      console.log("[/api/analyze] User row loaded. tier:", userRow.tier, "| scansUsed:", userRow.scans_used_this_month);
 
       // Auto-revert to Free if subscription expired (Section 16)
       const now = new Date();
@@ -144,11 +163,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!quotaOk) {
+        console.warn("[/api/analyze] Quota exceeded for user:", user.id, "| tier:", tier);
         return res.status(403).json({ error: "quota_exceeded" });
       }
     } else {
       // ---- GUEST: track by IP address ----
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      console.log("[/api/analyze] Guest request. IP:", ip);
 
       const { data: guestRow } = await admin.from("guest_usage").select("*").eq("ip_address", ip).single();
       const now = new Date();
@@ -161,6 +182,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (scansUsed >= FREE_MONTHLY_LIMIT) {
+        console.warn("[/api/analyze] Guest quota exceeded. IP:", ip, "| scansUsed:", scansUsed);
         return res.status(403).json({ error: "quota_exceeded" });
       }
 
@@ -178,6 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // same market-research result (same product + currency) within the TTL
     // window instead of paying for a brand-new Groq completion + Tavily
     // search call.
+    console.log("Loading cache...");
     const cacheKey = normalizeCacheKey(product, currency);
     const cacheCutoff = new Date(Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
@@ -187,6 +210,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq("cache_key", cacheKey)
       .gte("created_at", cacheCutoff)
       .single();
+    console.log("Cache loaded. Hit:", !!cachedRow, "| cacheKey:", cacheKey);
 
     let parsed: any;
     let modelUsed: string;
@@ -195,22 +219,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Cache hit — skip the AI pipeline entirely, no token cost, no search cost.
       parsed = cachedRow.parsed;
       modelUsed = cachedRow.model_used;
+      console.log("[/api/analyze] Using cached analysis. modelUsed:", modelUsed);
     } else {
       // ---- Call Groq + Tavily (Section 6 + Section 14A tier branching + Section 2 fallback) ----
       const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, language, tier });
 
       let aiResult;
       try {
+        logStep("Calling AI pipeline (Groq + Tavily)...");
         aiResult = await callAiWithFallback(prompt, imageBase64);
-      } catch (e) {
+        console.log("[/api/analyze] AI pipeline succeeded. modelUsed:", aiResult.modelUsed, "| usage:", aiResult.usage);
+      } catch (e: any) {
         // Section 10: both models failed — clear translated error, not a silent failure
-        return res.status(502).json({ error: "analysis_failed" });
+        console.error("[/api/analyze] AI pipeline failed (both primary and fallback exhausted):");
+        console.error(e);
+        console.error(e?.stack);
+        return res.status(502).json({ error: "analysis_failed", reason: e?.message });
       }
 
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
       // Section 25: log AI usage/cost for every real Groq call, win or lose downstream.
+      console.log("Saving database...");
       await logAiUsage(admin, {
         endpoint: "analyze",
         model: aiResult.modelUsed,
@@ -226,6 +257,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model_used: modelUsed,
         created_at: new Date().toISOString(),
       });
+      console.log("Saving database... done");
     }
 
     // Basic shape validation before trusting the response
@@ -234,6 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       typeof parsed?.marketFairPriceMin !== "number" ||
       typeof parsed?.marketFairPriceMax !== "number"
     ) {
+      console.error("[/api/analyze] AI response failed shape validation. parsed:", JSON.stringify(parsed)?.slice(0, 2000));
       return res.status(502).json({ error: "analysis_invalid" });
     }
 
@@ -297,6 +330,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     // ---- Record usage AFTER a successful analysis (never before) ----
+    console.log("[/api/analyze] Recording usage...");
     if (user) {
       const { data: row } = await admin.from("users").select("scans_used_this_month").eq("id", user.id).single();
       await admin.from("users").update({ scans_used_this_month: (row?.scans_used_this_month || 0) + 1 }).eq("id", user.id);
@@ -306,9 +340,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await admin.from("guest_usage").update({ scans_used_this_month: (row?.scans_used_this_month || 0) + 1 }).eq("ip_address", ip);
     }
 
+    console.log("Returning response...");
+    logRequestSuccess(start);
     return res.status(200).json(result);
   } catch (err: any) {
-    console.error("[/api/analyze] Unexpected error:", err);
-    return res.status(500).json({ error: "server_error" });
+    logUnhandledError(err, start);
+    return res.status(500).json({
+      error: "server_error",
+      // Debug-only fields — safe to keep during development since this is
+      // additive info, not a change to the normal success-path response shape.
+      message: err?.message,
+      stack: err?.stack,
+    });
   }
 }
