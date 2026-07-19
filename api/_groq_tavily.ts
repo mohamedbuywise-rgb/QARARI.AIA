@@ -56,10 +56,6 @@ async function searchTavily(query: string): Promise<{ results: TavilyResult[]; a
       max_results: 8,
       include_answer: true,
       include_raw_content: false,
-      // Boosts (does NOT restrict) results toward the Egyptian market so
-      // pricing comes back in EGP from Egyptian retailers where available,
-      // without excluding other sources if nothing local is found.
-      country: "Egypt",
     }),
   });
 
@@ -76,14 +72,6 @@ async function searchTavily(query: string): Promise<{ results: TavilyResult[]; a
   return { results, answer: json?.answer || null };
 }
 
-// True if the string contains Arabic-script characters — keeps the Tavily
-// query in whichever language the product name was actually typed in,
-// instead of always forcing English (which weakens relevance for Arabic
-// product names).
-function isArabic(text: string): boolean {
-  return /[\u0600-\u06FF]/.test(text);
-}
-
 // Pulls a clean search query out of the analyst prompt instead of sending
 // the whole multi-hundred-word prompt to Tavily. Handles both the single-
 // product shape from analyze.ts/ask.ts ("PRODUCT: ...") and the two-product
@@ -92,18 +80,11 @@ function buildSearchQuery(prompt: string): string {
   const productA = prompt.match(/PRODUCT A:\s*(.+)/i);
   const productB = prompt.match(/PRODUCT B:\s*(.+)/i);
   if (productA && productB) {
-    const a = productA[1].trim();
-    const b = productB[1].trim();
-    return isArabic(a) || isArabic(b)
-      ? `${a} مقابل ${b} مقارنة الأسعار في السوق المصري بالجنيه المصري`
-      : `${a} vs ${b} price comparison Egypt EGP`;
+    return `${productA[1].trim()} vs ${productB[1].trim()} price comparison`;
   }
   const single = prompt.match(/PRODUCT:\s*(.+)/i);
   const product = single ? single[1].trim() : prompt.slice(0, 200);
-  const suffix = isArabic(product)
-    ? "السعر في السوق المصري بالجنيه المصري مميزات وعيوب"
-    : "price in Egypt EGP Egyptian market pros and cons review";
-  return `${product} ${suffix}`;
+  return `${product} current market price pros and cons review`;
 }
 
 function formatSearchContext(results: TavilyResult[], answer: string | null): string {
