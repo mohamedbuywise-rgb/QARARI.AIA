@@ -13,6 +13,122 @@ function normalizeCacheKey(product: string, currency: string): string {
   return `${normalizedProduct}::${currency.trim().toUpperCase()}`;
 }
 
+// ---- AI response shape validation/normalization ----
+// There is no Zod schema anywhere in this backend (checked the whole repo) —
+// the previous "validator" was just three inline `typeof` checks in the
+// handler below, which threw away all detail and logged nothing but
+// "AI response failed shape validation". This replaces that with:
+//   1. a real field-by-field check that records exactly what was wrong, and
+//   2. normalization that fills in safe defaults for non-critical fields
+//      instead of 502'ing the whole request over something like a missing
+//      `hiddenRisks` array.
+interface FieldIssue {
+  field: string;
+  expected: string;
+  received: string;
+  value: unknown;
+}
+
+function describeType(v: unknown): string {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  if (Array.isArray(v)) return "array";
+  return typeof v;
+}
+
+// number OR null are both valid per the prompt ("marketFairPriceMin/Max/Mid":
+// number | null — the model is told to return null when it has no reliable
+// pricing signal instead of inventing a figure).
+function isNumberOrNull(v: unknown): v is number | null {
+  return v === null || typeof v === "number";
+}
+
+function bilingualStrings(v: any): { ar: string; en: string } {
+  return {
+    ar: typeof v?.ar === "string" ? v.ar : "",
+    en: typeof v?.en === "string" ? v.en : "",
+  };
+}
+
+function bilingualArrays(v: any): { ar: string[]; en: string[] } {
+  return {
+    ar: Array.isArray(v?.ar) ? v.ar : [],
+    en: Array.isArray(v?.en) ? v.en : [],
+  };
+}
+
+// Only these are treated as essential — everything else gets a safe default
+// rather than failing the whole request. `verdict` and the three price
+// fields are the ones the rest of the handler (moneySaved, verdict badge,
+// etc.) actually depends on existing in some valid form.
+function validateAndNormalizeAnalysis(parsed: any): { ok: true; data: any } | { ok: false; issues: FieldIssue[] } {
+  const issues: FieldIssue[] = [];
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    issues.push({ field: "(root)", expected: "object", received: describeType(parsed), value: parsed });
+    return { ok: false, issues };
+  }
+
+  if (typeof parsed.verdict !== "string" || !["good", "fair", "bad"].includes(parsed.verdict)) {
+    issues.push({
+      field: "verdict",
+      expected: '"good" | "fair" | "bad"',
+      received: describeType(parsed.verdict),
+      value: parsed.verdict,
+    });
+  }
+
+  for (const field of ["marketFairPriceMin", "marketFairPriceMax", "marketFairPriceMid"]) {
+    if (!isNumberOrNull(parsed[field])) {
+      issues.push({
+        field,
+        expected: "number | null",
+        received: describeType(parsed[field]),
+        value: parsed[field],
+      });
+    }
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  // marketFairPriceMid: derive from min/max if the model omitted it (as null)
+  // but both bounds are real numbers. Otherwise trust whatever the model gave
+  // (including null, when neither bound is available).
+  let marketFairPriceMid: number | null = parsed.marketFairPriceMid;
+  if (marketFairPriceMid === null && typeof parsed.marketFairPriceMin === "number" && typeof parsed.marketFairPriceMax === "number") {
+    marketFairPriceMid = Math.round((parsed.marketFairPriceMin + parsed.marketFairPriceMax) / 2);
+  }
+
+  // Non-critical fields: normalize to safe defaults instead of throwing 502.
+  const data = {
+    ...parsed,
+    marketFairPriceMid,
+    reasoningPoints: bilingualArrays(parsed.reasoningPoints),
+    pros: bilingualArrays(parsed.pros),
+    cons: bilingualArrays(parsed.cons),
+    hiddenRisks: bilingualArrays(parsed.hiddenRisks),
+    preRecommendation: bilingualStrings(parsed.preRecommendation),
+    futureCompatibility: bilingualStrings(parsed.futureCompatibility),
+    regretJustification: bilingualStrings(parsed.regretJustification),
+    finalTip: bilingualStrings(parsed.finalTip),
+    negotiationScript: bilingualStrings(parsed.negotiationScript),
+    regretLevel: ["low", "medium", "high"].includes(parsed.regretLevel) ? parsed.regretLevel : "medium",
+    betterAlternatives: Array.isArray(parsed.betterAlternatives) ? parsed.betterAlternatives : [],
+    ...(parsed.negotiationScriptVariants
+      ? {
+          negotiationScriptVariants: {
+            polite: bilingualStrings(parsed.negotiationScriptVariants?.polite),
+            firm: bilingualStrings(parsed.negotiationScriptVariants?.firm),
+          },
+        }
+      : {}),
+  };
+
+  return { ok: true, data };
+}
+
 function buildPrompt(opts: {
   product: string;
   offeredPrice: number;
@@ -56,9 +172,9 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 
 {
   "verdict": "good" | "fair" | "bad",
-  "marketFairPriceMin": number,
-  "marketFairPriceMax": number,
-  "marketFairPriceMid": number,
+  "marketFairPriceMin": number | null,
+  "marketFairPriceMax": number | null,
+  "marketFairPriceMid": number | null,
   "reasoningPoints": { "ar": string[], "en": string[] },
   "preRecommendation": { "ar": string, "en": string },
   "futureCompatibility": { "ar": string, "en": string },
@@ -75,7 +191,8 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 Rules:
 - marketFairPriceMin/Max must be a REAL researched range based on current market data you find via search, never a guess.
 - marketFairPriceMid is the midpoint of min/max.
-- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax.
+- If — and only if — the live search results give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
+- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
 - All prices in ${currency}.
 - Return ONLY the JSON object, nothing else.`;
 }
@@ -260,19 +377,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log("Saving database... done");
     }
 
-    // Basic shape validation before trusting the response
-    if (
-      typeof parsed?.verdict !== "string" ||
-      typeof parsed?.marketFairPriceMin !== "number" ||
-      typeof parsed?.marketFairPriceMax !== "number"
-    ) {
-      console.error("[/api/analyze] AI response failed shape validation. parsed:", JSON.stringify(parsed)?.slice(0, 2000));
-      return res.status(502).json({ error: "analysis_invalid" });
+    // Field-level shape validation + normalization (see validateAndNormalizeAnalysis above).
+    const validation = validateAndNormalizeAnalysis(parsed);
+    if (!validation.ok) {
+      console.error("[/api/analyze] Validation failed");
+      for (const issue of validation.issues) {
+        console.error(
+          `Field: ${issue.field}\nExpected: ${issue.expected}\nReceived: ${issue.received}\nValue: ${JSON.stringify(issue.value)}`
+        );
+      }
+      console.error("Raw AI JSON:", JSON.stringify(parsed)?.slice(0, 4000));
+      return res.status(502).json({
+        error: "analysis_invalid",
+        issues: validation.issues.map(({ field, expected, received }) => ({ field, expected, received })),
+      });
     }
+    parsed = validation.data;
 
-    const marketFairPriceMid =
-      parsed.marketFairPriceMid ?? Math.round((parsed.marketFairPriceMin + parsed.marketFairPriceMax) / 2);
-    const moneySaved = Math.max(0, marketFairPriceMid - Number(offeredPrice));
+    const marketFairPriceMid: number | null = parsed.marketFairPriceMid;
+    const moneySaved = marketFairPriceMid === null ? null : Math.max(0, marketFairPriceMid - Number(offeredPrice));
 
     // ---- Community insights (Section 27 — REAL social proof, never fabricated) ----
     // Log this user's real offered price as an anonymous event, then look at
