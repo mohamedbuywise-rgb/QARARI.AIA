@@ -265,8 +265,9 @@ export async function callAiWithFallback(
       if (targetCurrency) {
         try {
           const priceRange = await computeMarketPriceRange(
-            results.map((r) => `${r.title} ${r.content}`),
-            targetCurrency
+            results,
+            targetCurrency,
+            prompt
           );
           if (priceRange) {
             console.log(
