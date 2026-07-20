@@ -51,9 +51,8 @@ export async function logAiUsage(
   }
 ) {
   try {
-    console.log("[costTracking] Logging AI usage for endpoint:", opts.endpoint, "| model:", opts.model);
     const costUsd = estimateCostUsd(opts.model, opts.usage);
-    const { error } = await admin.from("ai_usage_log").insert({
+    await admin.from("ai_usage_log").insert({
       endpoint: opts.endpoint,
       model: opts.model,
       tier: opts.tier,
@@ -64,14 +63,7 @@ export async function logAiUsage(
       search_query_count: opts.usage.searchQueryCount || 0,
       estimated_cost_usd: costUsd,
     });
-    if (error) {
-      console.error("[costTracking] Supabase insert error:", error);
-    } else {
-      console.log("[costTracking] AI usage logged. estimatedCostUsd:", costUsd);
-    }
-  } catch (e: any) {
-    console.error("[costTracking] Failed to log AI usage:");
-    console.error(e);
-    console.error(e?.stack);
+  } catch (e) {
+    console.error("[costTracking] Failed to log AI usage:", e);
   }
 }

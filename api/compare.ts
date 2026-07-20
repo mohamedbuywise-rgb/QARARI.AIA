@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
-import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
 // Fair-use cap for paid subscribers — Compare used to be unlimited, but each
 // comparison is a full Groq call with a Tavily search (same cost as a
@@ -32,48 +31,31 @@ Rules:
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const start = Date.now();
-  logRequestStart(req);
-  logEnvPresence({
-    GROQ_API_KEY: process.env.GROQ_API_KEY,
-    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
-    SUPABASE_URL: process.env.SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  });
-
   if (req.method !== "POST") {
-    console.warn("[/api/compare] Rejected non-POST method:", req.method);
     return res.status(405).json({ error: "method_not_allowed" });
   }
 
   try {
     const { productA, productB, priceA, priceB, currency } = req.body || {};
 
-    console.log("[/api/compare] Validating input...");
     if (
       !productA || typeof productA !== "string" ||
       !productB || typeof productB !== "string" ||
       !priceA || Number(priceA) <= 0 ||
       !priceB || Number(priceB) <= 0
     ) {
-      console.warn("[/api/compare] Invalid input:", { productA, productB, priceA, priceB });
       return res.status(400).json({ error: "invalid_input" });
     }
-    console.log("[/api/compare] Input OK.", { productA, productB, priceA, priceB, currency });
 
-    console.log("Checking authentication...");
     const admin = getSupabaseAdmin();
     const user = await getAuthedUser(req);
-    console.log("Authentication OK. Signed in:", !!user, user ? `(userId: ${user.id})` : "(guest)");
 
     // Compare Products is a Premium-only feature (Section 15) — enforce
     // server-side too, never trust the client-side gate alone.
     if (!user) {
-      console.warn("[/api/compare] Rejected guest — auth required");
       return res.status(401).json({ error: "auth_required" });
     }
 
-    console.log("[/api/compare] Loading user row...");
     const { data: userRow, error: userErr } = await admin
       .from("users")
       .select("tier, subscription_end_date, compares_used_this_month, compares_reset_at")
@@ -81,10 +63,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .single();
 
     if (userErr || !userRow) {
-      console.error("[/api/compare] user_not_found. Supabase error:", userErr);
       return res.status(404).json({ error: "user_not_found" });
     }
-    console.log("[/api/compare] User row loaded. tier:", userRow.tier, "| comparesUsed:", userRow.compares_used_this_month);
 
     const now = new Date();
     let tier: "free" | "premium" = userRow.tier;
@@ -94,7 +74,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (tier !== "premium") {
-      console.warn("[/api/compare] Rejected non-premium user:", user.id);
       return res.status(403).json({ error: "premium_required" });
     }
 
@@ -108,7 +87,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (comparesUsed >= COMPARE_MONTHLY_LIMIT) {
-      console.warn("[/api/compare] Monthly compare limit reached for user:", user.id);
       return res.status(403).json({ error: "compare_limit_reached", remaining: 0, max: COMPARE_MONTHLY_LIMIT });
     }
 
@@ -116,23 +94,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let aiResult;
     try {
-      logStep("Calling AI pipeline (Groq + Tavily) for comparison...");
       aiResult = await callAiWithFallback(prompt);
-      console.log("[/api/compare] AI pipeline succeeded. modelUsed:", aiResult.modelUsed, "| usage:", aiResult.usage);
-    } catch (e: any) {
-      console.error("[/api/compare] AI pipeline failed (both primary and fallback exhausted):");
-      console.error(e);
-      console.error(e?.stack);
-      return res.status(502).json({ error: "comparison_failed", reason: e?.message });
+    } catch (e) {
+      return res.status(502).json({ error: "comparison_failed" });
     }
 
     const parsed = aiResult.data;
     if (!Array.isArray(parsed?.rows) || !parsed?.finalRecommendation) {
-      console.error("[/api/compare] AI response failed shape validation. parsed:", JSON.stringify(parsed)?.slice(0, 2000));
       return res.status(502).json({ error: "comparison_invalid" });
     }
 
-    console.log("Saving database...");
     await logAiUsage(admin, {
       endpoint: "compare",
       model: aiResult.modelUsed,
@@ -144,7 +115,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ---- Record usage AFTER a successful comparison (never before) ----
     const newComparesUsed = comparesUsed + 1;
     await admin.from("users").update({ compares_used_this_month: newComparesUsed }).eq("id", user.id);
-    console.log("Saving database... done");
 
     const result = {
       productA,
@@ -158,11 +128,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       max: COMPARE_MONTHLY_LIMIT,
     };
 
-    console.log("Returning response...");
-    logRequestSuccess(start);
     return res.status(200).json(result);
-  } catch (err: any) {
-    logUnhandledError(err, start);
-    return res.status(500).json({ error: "server_error", message: err?.message, stack: err?.stack });
+  } catch (err) {
+    console.error("[/api/compare] Unexpected error:", err);
+    return res.status(500).json({ error: "server_error" });
   }
 }

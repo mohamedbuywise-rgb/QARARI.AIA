@@ -193,7 +193,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await refreshHistory();
 
     // Section 12: maintain totalMoneySaved as a running total, never subtracting.
-    if (typeof r.moneySaved === "number" && r.moneySaved > 0) {
+    if (r.moneySaved > 0) {
       const { data: row } = await supabase.from("users").select("total_money_saved").eq("id", session.user.id).single();
       await supabase
         .from("users")

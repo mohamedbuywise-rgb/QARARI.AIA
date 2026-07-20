@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
-import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
 // Hard cap on how many chat questions can be asked per analysis. Each
 // question is a Groq call WITHOUT a Tavily search (unlike the main
@@ -55,17 +54,7 @@ Return a JSON object with EXACTLY this shape and nothing else:
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const start = Date.now();
-  logRequestStart(req);
-  logEnvPresence({
-    GROQ_API_KEY: process.env.GROQ_API_KEY,
-    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
-    SUPABASE_URL: process.env.SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  });
-
   if (req.method !== "POST") {
-    console.warn("[/api/ask] Rejected non-POST method:", req.method);
     return res.status(405).json({ error: "method_not_allowed" });
   }
 
@@ -83,21 +72,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       language = "ar",
     } = req.body || {};
 
-    console.log("[/api/ask] Validating input...");
     if (!reportId || typeof reportId !== "string" || !question || typeof question !== "string" || !question.trim()) {
-      console.warn("[/api/ask] Invalid input (reportId/question):", { reportId, question });
       return res.status(400).json({ error: "invalid_input" });
     }
     if (!product || typeof product !== "string" || typeof offeredPrice !== "number") {
-      console.warn("[/api/ask] Invalid input (product/offeredPrice):", { product, offeredPrice });
       return res.status(400).json({ error: "invalid_input" });
     }
-    console.log("[/api/ask] Input OK. reportId:", reportId, "| product:", product);
 
-    console.log("Checking authentication...");
     const admin = getSupabaseAdmin();
     const user = await getAuthedUser(req);
-    console.log("Authentication OK. Signed in:", !!user, user ? `(userId: ${user.id})` : "(guest)");
 
     // Identity used for the per-report chat cap — same signed-in vs guest
     // split used elsewhere (Section 14), so the same person can't dodge the
@@ -106,7 +89,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? `user:${user.id}`
       : `ip:${(req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown"}`;
 
-    console.log("[/api/ask] Loading chat usage for identity:", identity);
     const { data: usageRow } = await admin
       .from("chat_usage")
       .select("messages_used")
@@ -115,7 +97,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .single();
 
     const used = usageRow?.messages_used || 0;
-    console.log("[/api/ask] Chat usage loaded. used:", used);
 
     // Real tier — also determines whether the per-report chat cap applies.
     // Premium subscribers get unlimited chat (advertised on the subscription
@@ -137,7 +118,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const isUnlimitedChat = tier === "premium";
     if (!isUnlimitedChat && used >= MAX_CHAT_MESSAGES_PER_REPORT) {
-      console.warn("[/api/ask] Chat message limit reached. identity:", identity, "| used:", used);
       return res.status(403).json({ error: "chat_limit_reached", remaining: 0, max: MAX_CHAT_MESSAGES_PER_REPORT });
     }
 
@@ -155,24 +135,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let aiResult;
     try {
-      logStep("Calling AI pipeline (Groq, no search) for chat answer...");
       aiResult = await callAiWithFallback(prompt, undefined, false);
-      console.log("[/api/ask] AI pipeline succeeded. modelUsed:", aiResult.modelUsed, "| usage:", aiResult.usage);
-    } catch (e: any) {
-      console.error("[/api/ask] AI pipeline failed (both primary and fallback exhausted):");
-      console.error(e);
-      console.error(e?.stack);
-      return res.status(502).json({ error: "ask_failed", reason: e?.message });
+    } catch (e) {
+      return res.status(502).json({ error: "ask_failed" });
     }
 
     const answer = aiResult.data?.answer;
     if (typeof answer !== "string" || !answer.trim()) {
-      console.error("[/api/ask] AI response failed shape validation. data:", JSON.stringify(aiResult.data)?.slice(0, 2000));
       return res.status(502).json({ error: "ask_invalid" });
     }
 
     // Section 25: log every real Groq call, same as /api/analyze and /api/compare.
-    console.log("Saving database...");
     await logAiUsage(admin, {
       endpoint: "ask",
       model: aiResult.modelUsed,
@@ -189,18 +162,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       messages_used: newUsed,
       updated_at: new Date().toISOString(),
     });
-    console.log("Saving database... done");
 
-    console.log("Returning response...");
-    logRequestSuccess(start);
     return res.status(200).json({
       answer: answer.trim(),
       remaining: isUnlimitedChat ? null : Math.max(0, MAX_CHAT_MESSAGES_PER_REPORT - newUsed),
       max: isUnlimitedChat ? null : MAX_CHAT_MESSAGES_PER_REPORT,
       unlimited: isUnlimitedChat,
     });
-  } catch (err: any) {
-    logUnhandledError(err, start);
-    return res.status(500).json({ error: "server_error", message: err?.message, stack: err?.stack });
+  } catch (err) {
+    console.error("[/api/ask] Unexpected error:", err);
+    return res.status(500).json({ error: "server_error" });
   }
 }

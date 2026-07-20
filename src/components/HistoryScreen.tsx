@@ -21,7 +21,7 @@ export function HistoryScreen() {
     const now = new Date();
     const monthAgo = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const thisMonth = history.filter((h) => h.createdAt >= monthAgo);
-    const totalSaved = history.reduce((sum, h) => sum + (typeof h.moneySaved === "number" ? h.moneySaved : 0), 0);
+    const totalSaved = history.reduce((sum, h) => sum + h.moneySaved, 0);
     const goodDeals = history.filter((h) => h.verdict === "good").length;
     const badDeals = history.filter((h) => h.verdict === "bad").length;
 
@@ -158,10 +158,10 @@ export function HistoryScreen() {
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1">
-                  <span className={`rounded-lg border px-2 py-0.5 text-xs font-medium ${verdictColor[h.verdict] ?? verdictColor.fair}`}>
+                  <span className={`rounded-lg border px-2 py-0.5 text-xs font-medium ${verdictColor[h.verdict]}`}>
                     {t(h.verdict === "good" ? "goodDeal" : h.verdict === "fair" ? "fairDeal" : "badDeal")}
                   </span>
-                  {typeof h.moneySaved === "number" && h.moneySaved > 0 && (
+                  {h.moneySaved > 0 && (
                     <span className="text-xs font-bold text-emerald-400">
                       {h.moneySaved.toLocaleString()} {cShort}
                     </span>

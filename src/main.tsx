@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client"
 import App from "./App.tsx"
 import AdminApp from "./admin/AdminApp.tsx"
 import { SplashScreen, shouldShowSplash } from "@/components/SplashScreen"
-import { ErrorBoundary } from "@/components/ErrorBoundary"
 import "./index.css"
 
 // The Admin Dashboard (Section 15 approve/reject UI, plus Sections 25-26)
@@ -26,8 +25,6 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <Root />
-    </ErrorBoundary>
+    <Root />
   </React.StrictMode>
 )

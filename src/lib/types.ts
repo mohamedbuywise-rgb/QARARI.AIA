@@ -47,12 +47,10 @@ export interface AnalysisResult {
   offeredPrice: number;
   currency: string;
   verdict: Verdict;
-  // Nullable: the backend now allows the AI to return null for these when it
-  // genuinely has no reliable pricing data, instead of inventing a number.
-  marketFairPriceMin: number | null;
-  marketFairPriceMax: number | null;
-  marketFairPriceMid: number | null;
-  moneySaved: number | null;
+  marketFairPriceMin: number;
+  marketFairPriceMax: number;
+  marketFairPriceMid: number;
+  moneySaved: number;
   reasoningPoints: BilingualArray;
   preRecommendation: BilingualText;
   futureCompatibility: BilingualText;

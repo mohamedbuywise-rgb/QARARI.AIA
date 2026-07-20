@@ -3,7 +3,6 @@ import { getSupabaseAdmin } from "../_supabaseAdmin.js";
 import { sendEmail } from "../_resend.js";
 import { callAiWithFallback } from "../_groq_tavily.js";
 import { logAiUsage } from "../_costTracking.js";
-import { logRequestStart, logRequestSuccess, logUnhandledError, logStep } from "../_logger.js";
 
 const FREE_MONTHLY_LIMIT = 5;
 
@@ -129,10 +128,8 @@ CURRENCY: ${row.currency}`;
         await admin.from("watchlist").update({ notified_at: new Date().toISOString() }).eq("id", row.id);
         notified++;
       }
-    } catch (e: any) {
-      console.error(`[cron] watchlist check failed for row ${row.id}:`);
-      console.error(e);
-      console.error(e?.stack);
+    } catch (e) {
+      console.error(`[cron] watchlist check failed for row ${row.id}:`, e);
     }
   }
 
@@ -159,71 +156,42 @@ async function resetMonthlyCompares(admin: any) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const start = Date.now();
-  logRequestStart(req);
-
   if (!isValidCronRequest(req)) {
-    console.warn("[cron] Rejected request — invalid or missing CRON_SECRET auth");
     return res.status(401).json({ error: "unauthorized" });
   }
 
+  const admin = getSupabaseAdmin();
+  const summary: Record<string, unknown> = {};
+
   try {
-    const admin = getSupabaseAdmin();
-    const summary: Record<string, unknown> = {};
-
-    logStep("revertExpiredSubscriptions...");
-    try {
-      summary.subscriptions = await revertExpiredSubscriptions(admin);
-      console.log("[cron] revertExpiredSubscriptions result:", summary.subscriptions);
-    } catch (e: any) {
-      console.error("[cron] revertExpiredSubscriptions failed:");
-      console.error(e);
-      console.error(e?.stack);
-      summary.subscriptions = { error: String(e) };
-    }
-
-    logStep("resetMonthlyScans...");
-    try {
-      summary.scanResets = await resetMonthlyScans(admin);
-      console.log("[cron] resetMonthlyScans result:", summary.scanResets);
-    } catch (e: any) {
-      console.error("[cron] resetMonthlyScans failed:");
-      console.error(e);
-      console.error(e?.stack);
-      summary.scanResets = { error: String(e) };
-    }
-
-    logStep("resetMonthlyCompares...");
-    try {
-      summary.compareResets = await resetMonthlyCompares(admin);
-      console.log("[cron] resetMonthlyCompares result:", summary.compareResets);
-    } catch (e: any) {
-      console.error("[cron] resetMonthlyCompares failed:");
-      console.error(e);
-      console.error(e?.stack);
-      summary.compareResets = { error: String(e) };
-    }
-
-    logStep("checkWatchlistPriceDrops...");
-    try {
-      summary.watchlist = await checkWatchlistPriceDrops(admin);
-      console.log("[cron] checkWatchlistPriceDrops result:", summary.watchlist);
-    } catch (e: any) {
-      console.error("[cron] checkWatchlistPriceDrops failed:");
-      console.error(e);
-      console.error(e?.stack);
-      summary.watchlist = { error: String(e) };
-    }
-
-    console.log("Saving database...");
-    await admin.from("cron_logs").insert({ job_name: "daily", summary });
-    console.log("Saving database... done");
-
-    console.log("Returning response...");
-    logRequestSuccess(start);
-    return res.status(200).json({ success: true, summary });
-  } catch (err: any) {
-    logUnhandledError(err, start);
-    return res.status(500).json({ error: "server_error", message: err?.message, stack: err?.stack });
+    summary.subscriptions = await revertExpiredSubscriptions(admin);
+  } catch (e) {
+    console.error("[cron] revertExpiredSubscriptions failed:", e);
+    summary.subscriptions = { error: String(e) };
   }
+
+  try {
+    summary.scanResets = await resetMonthlyScans(admin);
+  } catch (e) {
+    console.error("[cron] resetMonthlyScans failed:", e);
+    summary.scanResets = { error: String(e) };
+  }
+
+  try {
+    summary.compareResets = await resetMonthlyCompares(admin);
+  } catch (e) {
+    console.error("[cron] resetMonthlyCompares failed:", e);
+    summary.compareResets = { error: String(e) };
+  }
+
+  try {
+    summary.watchlist = await checkWatchlistPriceDrops(admin);
+  } catch (e) {
+    console.error("[cron] checkWatchlistPriceDrops failed:", e);
+    summary.watchlist = { error: String(e) };
+  }
+
+  await admin.from("cron_logs").insert({ job_name: "daily", summary });
+
+  return res.status(200).json({ success: true, summary });
 }
