@@ -678,6 +678,7 @@ export interface MarketPriceRange {
   sourceCurrency: SupportedCurrency; // currency the raw prices were found in
   rate: number; // 1 sourceCurrency = `rate` targetCurrency
   sampleSize: number; // number of distinct listings that survived filtering
+  sampleValues: number[]; // the individual surviving prices, already converted & sorted — given to the model as transparency, not just the aggregate min/mid/max
 }
 
 function buildRange(
@@ -691,7 +692,8 @@ function buildRange(
   const max = Math.round(rawValues[rawValues.length - 1] * rate);
   const weightedExpanded = expandByWeight(kept);
   const mid = Math.round(median(weightedExpanded) * rate);
-  return { min, mid, max, targetCurrency, sourceCurrency, rate, sampleSize: kept.length };
+  const sampleValues = [...new Set(rawValues)].map((v) => Math.round(v * rate));
+  return { min, mid, max, targetCurrency, sourceCurrency, rate, sampleSize: kept.length, sampleValues };
 }
 
 // ============================================================================
@@ -957,10 +959,37 @@ export function formatMarketPriceContext(range: MarketPriceRange | null): string
       ? `These figures were found directly in ${range.targetCurrency} in the search results above — no currency conversion was needed.`
       : `These figures were found in ${range.sourceCurrency} in the search results above and have already been converted to ${range.targetCurrency} by the backend using a live exchange rate (1 ${range.sourceCurrency} = ${range.rate.toFixed(4)} ${range.targetCurrency}).`;
 
-  return `\n\nBACKEND-EXTRACTED MARKET PRICE DATA (authoritative — already parsed, filtered, outlier-cleaned, and, if needed, currency-converted from the live search results by the backend, not by you):
+  const sampleValuesNote =
+    range.sampleValues.length > 0
+      ? `Individual listing prices that survived filtering (already converted to ${range.targetCurrency}): ${range.sampleValues.join(", ")}.`
+      : "";
+
+  // PHILOSOPHY CHANGE: this used to tell the model to use these numbers
+  // verbatim and never re-derive them ("do not re-derive, re-estimate, or
+  // re-convert them yourself"). That made the backend's regex/keyword
+  // pipeline the FINAL word even when it was wrong — and a fixed rule-based
+  // pipeline can never anticipate every phrasing, site layout, or edge
+  // case, unlike a model actually reading the page. This is also why the
+  // old Gemini + Google Search grounding flow, which just let the model use
+  // its own judgment on the raw search text, often produced a more sensible
+  // "fair price" than a rigid pipeline can.
+  //
+  // The fix isn't to remove backend extraction (it catches far more noise,
+  // far more consistently, than an LLM reading raw text top to bottom) —
+  // it's to stop treating its output as unquestionable. The backend
+  // calculation is now framed as a strong, pre-filtered REFERENCE the model
+  // should anchor to by default, but the model is explicitly told to check
+  // it against the actual search results and its own knowledge of the
+  // product, and to adjust if the reference is clearly inconsistent with
+  // what it's reading (e.g. wrong product variant slipped through, a
+  // regional price spike, a stale listing). This keeps the pipeline's noise
+  // filtering as the default anchor while restoring the model's ability to
+  // catch what the pipeline couldn't.
+  return `\n\nBACKEND-COMPUTED MARKET PRICE REFERENCE (a pre-filtered, outlier-cleaned, currency-converted calculation from the live search results above — treat it as your primary reference point, not as an unquestionable final answer):
 - marketFairPriceMin: ${range.min} ${range.targetCurrency}
 - marketFairPriceMid: ${range.mid} ${range.targetCurrency}
 - marketFairPriceMax: ${range.max} ${range.targetCurrency}
 ${sourceNote}
-Use these numbers exactly for marketFairPriceMin/Mid/Max in your JSON response — do not re-derive, re-estimate, or re-convert them yourself. Do NOT return null/"unavailable" for these fields; real, filtered pricing data is available. Your role here is only to explain and contextualize these already-calculated numbers.`;
+${sampleValuesNote}
+Use this reference calculation as your starting point for marketFairPriceMin/Mid/Max. Cross-check it against the search results above and your own knowledge of this product: if it clearly matches what you're seeing (right product, right variant, sane numbers), use it as-is. If you can see from the search results that it's wrong — e.g. it's mixing in the wrong storage/trim/model variant, an obviously stale or regional-outlier listing, or a number that doesn't make sense for this exact product — use your own judgment to produce a more accurate range instead, and mention briefly in your reasoning why you adjusted it. Do NOT return null/"unavailable" for these fields; real pricing data is available, either from this reference or from the search results directly.`;
 }
