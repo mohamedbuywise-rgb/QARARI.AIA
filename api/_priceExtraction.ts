@@ -163,43 +163,55 @@ export function collectPricesFromText(text: string): DetectedPrice[] {
 //    Amazon for $999"), so they're only rejected when they sit immediately
 //    before the number.
 
+// Every keyword below is checked in BOTH English and Arabic. This matters a
+// lot for this product: EGP/SAR/AED/KWD/QAR/BHD/OMR/JOD listings (Noon,
+// Jarir, Amazon.eg/.sa, 2b, Btech, Carrefour Egypt/UAE, etc.) are very
+// often in Arabic, and an English-only keyword list would silently let
+// every Arabic-language trade-in/installment/accessory/shipping price
+// straight through the filter — which is exactly how a real product price
+// range like "55,000-75,000 EGP" ends up polluted down to something like
+// "14,694-40,269 EGP" (a stray Arabic "قسط شهري"/"جراب"/"شحن" style price
+// slipping in unfiltered).
 const WIDE_REJECT_KEYWORDS: { reason: string; regex: RegExp }[] = [
-  { reason: "trade-in", regex: /trade[\s-]?in/i },
-  { reason: "financing", regex: /financ(e|ing)/i },
-  { reason: "monthly/per-month", regex: /(\/\s*mo\b|\/\s*month\b|per\s+month|monthly)/i },
-  { reason: "installment", regex: /install?ment/i },
-  { reason: "coupon", regex: /coupon/i },
-  { reason: "discount", regex: /discount/i },
-  { reason: "save-amount", regex: /\bsave\b/i },
-  { reason: "shipping", regex: /shipping|delivery\s+fee/i },
-  { reason: "tax", regex: /\btax(es)?\b/i },
+  { reason: "trade-in", regex: /trade[\s-]?in|استبدال|تقييم\s*الاستبدال|استرداد\s*الجهاز/i },
+  { reason: "financing", regex: /financ(e|ing)|تمويل/i },
+  { reason: "monthly/per-month", regex: /(\/\s*mo\b|\/\s*month\b|per\s+month|monthly)|شهري(ا|ًا)?|بالشهر|قسط\s*شهري|شهر\/|\/شهر/i },
+  { reason: "installment", regex: /install?ment|تقسيط|أقساط|اقساط/i },
+  { reason: "coupon", regex: /coupon|كوبون|كود\s*خصم/i },
+  { reason: "discount", regex: /discount|خصم|تخفيض/i },
+  { reason: "save-amount", regex: /\bsave\b|توفير|وفر\b/i },
+  { reason: "shipping", regex: /shipping|delivery\s+fee|شحن|مصاريف\s*الشحن|رسوم\s*التوصيل/i },
+  { reason: "tax", regex: /\btax(es)?\b|ضريبة|ضرائب/i },
   { reason: "applecare", regex: /apple\s?care/i },
-  { reason: "insurance", regex: /insurance/i },
-  { reason: "case/cover", regex: /\b(case|cover)\b/i },
-  { reason: "charger/adapter/cable", regex: /\b(charger|adapter|cable)\b/i },
-  { reason: "screen-protector", regex: /screen\s?protector/i },
-  { reason: "accessory/bundle", regex: /\b(accessor(y|ies)|bundle)\b/i },
-  { reason: "gift-card", regex: /gift\s?card/i },
-  { reason: "auction/bid", regex: /\b(auction|bid)\b/i },
-  { reason: "deposit/reservation", regex: /\b(deposit|reservation)\b/i },
-  { reason: "membership/subscription", regex: /\b(membership|subscription)\b/i },
-  { reason: "repair/replacement", regex: /\b(repair|replacement)\b/i },
+  { reason: "insurance", regex: /insurance|تأمين/i },
+  { reason: "case/cover", regex: /\b(case|cover)\b|جراب|كفر|غطاء/i },
+  { reason: "charger/adapter/cable", regex: /\b(charger|adapter|cable)\b|شاحن|محول|كابل/i },
+  { reason: "screen-protector", regex: /screen\s?protector|حماية\s*شاشة|واقي\s*شاشة/i },
+  { reason: "accessory/bundle", regex: /\b(accessor(y|ies)|bundle)\b|إكسسوار|اكسسوار|حزمة/i },
+  { reason: "gift-card", regex: /gift\s?card|بطاقة\s*هدية|كارت\s*هدية/i },
+  { reason: "auction/bid", regex: /\b(auction|bid)\b|مزاد|مزايدة/i },
+  { reason: "deposit/reservation", regex: /\b(deposit|reservation)\b|عربون|حجز/i },
+  { reason: "membership/subscription", regex: /\b(membership|subscription)\b|عضوية|اشتراك/i },
+  { reason: "repair/replacement", regex: /\b(repair|replacement)\b|إصلاح|صيانة/i },
 ];
 
 // "from" / "up to" / "starting at" / "starting from" — only rejected when
 // immediately preceding the number, to avoid nuking legitimate hits like
-// "in stock at Amazon for $999".
+// "in stock at Amazon for $999". Same caution applied to the Arabic
+// equivalents: bare "من" (a generic preposition) is deliberately excluded
+// since it would false-positive-reject far too often; only the unambiguous
+// multi-word forms are matched.
 const NEAR_PREFIX_REJECT_KEYWORDS: { reason: string; regex: RegExp }[] = [
-  { reason: "starting-at/from", regex: /(starting\s+(at|from)|up\s+to|\bfrom\b)\s*$/i },
+  { reason: "starting-at/from", regex: /(starting\s+(at|from)|up\s+to|\bfrom\b|يبدأ\s*من|ابتداء(ً)?\s*من|حتى|وصولا(ً)?\s*إلى)\s*$/i },
 ];
 
 // "Used" pricing is only noise if the product being searched for is NOT
 // itself a used/refurbished/second-hand listing.
-const USED_KEYWORD_REGEX = /\bused\b(?!\s*for)/i;
+const USED_KEYWORD_REGEX = /\bused\b(?!\s*for)|مستعمل(ة)?|مجدد(ة)?/i;
 
 function isProductSearchForUsedItem(productQuery: string | undefined): boolean {
   if (!productQuery) return false;
-  return /\b(used|refurbished|second[\s-]?hand|renewed|pre[\s-]?owned)\b/i.test(productQuery);
+  return /\b(used|refurbished|second[\s-]?hand|renewed|pre[\s-]?owned)\b|مستعمل|مجدد/i.test(productQuery);
 }
 
 export interface RejectedPrice extends RawPriceHit {
