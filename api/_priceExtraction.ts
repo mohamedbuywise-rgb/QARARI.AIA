@@ -63,10 +63,23 @@ export function isSupportedCurrency(code: string): code is SupportedCurrency {
 // (e.g. EGP's "E£") must be checked before patterns they could collide with
 // (GBP's plain "£").
 const CURRENCY_PATTERNS: { code: SupportedCurrency; regex: RegExp }[] = [
-  { code: "EGP", regex: /(E£|EGP|L\.?E\.?\b|ج\.م|جنيه\s*مصري|جنيه)/i },
-  { code: "SAR", regex: /(SAR|S\.?R\.?\b|ر\.س|ريال\s*سعودي)/i },
-  { code: "AED", regex: /(AED|DHS\b|Dhs\b|د\.إ|درهم\s*إماراتي|درهم)/i },
-  { code: "KWD", regex: /(KWD|K\.?D\.?\b|د\.ك|دينار\s*كويتي)/i },
+  // BUG FOUND: these four short-form patterns (L.E., S.R., DHS, K.D.) were
+  // missing a LEADING \b. Without it, "L\.?E\.?\b" collapses into matching
+  // any bare "le" substring followed by a word boundary — which fires
+  // inside completely ordinary English words like "available", "sale",
+  // "table", "sample", "incredible" (anything ending "-le "). Since EGP is
+  // the very first pattern checked, a USD/EUR/GBP price sitting anywhere
+  // near one of those common words got its currency silently misdetected
+  // as EGP, was grouped into the EGP bucket, and then "converted" using an
+  // EGP exchange rate it never actually had — a direct, high-frequency
+  // mechanism for producing nonsense mixed-currency ranges. Adding the
+  // leading \b restores the intended "L.E." / "S.R." / "K.D." abbreviation
+  // matching (still allowing "L.E.", "LE", "L.E", etc.) while requiring it
+  // to start at a word boundary, not mid-word.
+  { code: "EGP", regex: /(E£|EGP|\bL\.?E\.?\b|ج\.م|جنيه\s*مصري|جنيه)/i },
+  { code: "SAR", regex: /(SAR|\bS\.?R\.?\b|ر\.س|ريال\s*سعودي)/i },
+  { code: "AED", regex: /(AED|\bDHS\b|د\.إ|درهم\s*إماراتي|درهم)/i },
+  { code: "KWD", regex: /(KWD|\bK\.?D\.?\b|د\.ك|دينار\s*كويتي)/i },
   { code: "QAR", regex: /(QAR|ر\.ق|ريال\s*قطري)/i },
   { code: "BHD", regex: /(BHD|د\.ب|دينار\s*بحريني)/i },
   { code: "OMR", regex: /(OMR|ر\.ع|ريال\s*عماني)/i },
@@ -126,6 +139,110 @@ function maskProductModelNumbers(text: string, productName: string | null): stri
   return text.replace(re, (match) => match.replace(/\d/g, "#"));
 }
 
+// ============================================================================
+// STEP 0.5 — Product variant matching (storage capacity + trim suffix)
+// ============================================================================
+//
+// BUG FOUND: this entire step did not exist. Nothing anywhere in the
+// pipeline checked whether a Tavily result was actually about the SAME
+// storage tier / trim the user searched for. Searching "Samsung Galaxy S24
+// Ultra 256GB" would happily pool prices from 256GB, 512GB, and 1TB
+// listings — and separately from S24, S24+, and S24 FE listings — into one
+// currency bucket, because nothing ever looked past "does this text contain
+// a number next to a currency marker that isn't obviously noise". Those are
+// all individually "valid" prices, just for the wrong product, so no amount
+// of keyword filtering or IQR outlier removal could ever catch them: a
+// 512GB price is not a statistical outlier next to other 512GB prices, it's
+// just wrong for a 256GB search. This is the direct mechanism behind
+// "14,694 EGP -> 40,269 EGP" (a spread across storage tiers/trims, not a
+// spread within one real market).
+//
+// Fix: before any number is even extracted, drop whole Tavily results whose
+// title/lead content clearly indicate a CONFLICTING storage size or trim
+// suffix and do not also mention the one the user asked for. Deliberately
+// conservative: a result that simply doesn't mention storage/trim at all is
+// left alone (ambiguous != wrong), so this only removes results that
+// affirmatively point at a different variant.
+
+interface VariantConstraints {
+  requestedStorageGB: number | null;
+  requestedSuffix: string | null; // e.g. "ultra", "plus", "pro max", or null for a bare base model
+}
+
+// Ordered most-specific-first so "Pro Max" is never mistaken for a bare
+// "Pro", and "Ultra" isn't confused with a differently-named trim.
+const VARIANT_SUFFIX_PATTERNS: { name: string; regex: RegExp }[] = [
+  { name: "pro max", regex: /\bpro\s*max\b/i },
+  { name: "ultra", regex: /\bultra\b/i },
+  { name: "plus", regex: /\bplus\b|\d\+(?!\d)/i }, // "Plus" or a bare "S24+"-style glued plus
+  { name: "pro", regex: /\bpro\b/i },
+  { name: "max", regex: /\bmax\b/i },
+  { name: "fe", regex: /\bfe\b/i },
+  { name: "mini", regex: /\bmini\b/i },
+  { name: "se", regex: /\bse\b/i },
+  { name: "note", regex: /\bnote\b/i },
+  { name: "air", regex: /\bair\b/i },
+  { name: "lite", regex: /\blite\b/i },
+];
+
+function detectVariantSuffix(text: string): string | null {
+  for (const { name, regex } of VARIANT_SUFFIX_PATTERNS) {
+    if (regex.test(text)) return name;
+  }
+  return null;
+}
+
+function extractStorageGB(text: string): number | null {
+  const m = /(\d+(?:\.\d+)?)\s*(TB|GB)\b/i.exec(text);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  return m[2].toUpperCase() === "TB" ? num * 1024 : num;
+}
+
+function extractVariantConstraints(productName: string | null): VariantConstraints {
+  if (!productName) return { requestedStorageGB: null, requestedSuffix: null };
+  return {
+    requestedStorageGB: extractStorageGB(productName),
+    requestedSuffix: detectVariantSuffix(productName),
+  };
+}
+
+// How much of a result's text to scan for variant signals — title plus a
+// short lead-in of content, mirroring how these pages actually state the
+// variant (in the headline), not deep in unrelated page boilerplate.
+const VARIANT_SCAN_CHARS = 300;
+
+function resultConflictsWithVariant(
+  result: TavilyResultForPricing,
+  constraints: VariantConstraints
+): string | null {
+  if (constraints.requestedStorageGB === null && constraints.requestedSuffix === null) return null;
+  const headline = `${result.title} ${result.content.slice(0, VARIANT_SCAN_CHARS)}`;
+
+  if (constraints.requestedStorageGB !== null) {
+    const storageMatches = [...headline.matchAll(/(\d+(?:\.\d+)?)\s*(TB|GB)\b/gi)];
+    if (storageMatches.length > 0) {
+      const foundGBs = storageMatches.map((m) =>
+        m[2].toUpperCase() === "TB" ? parseFloat(m[1]) * 1024 : parseFloat(m[1])
+      );
+      const hasRequested = foundGBs.some((gb) => Math.abs(gb - constraints.requestedStorageGB!) < 0.01);
+      const hasConflicting = foundGBs.some((gb) => Math.abs(gb - constraints.requestedStorageGB!) >= 0.01);
+      if (hasConflicting && !hasRequested) {
+        return `storage-mismatch (page mentions ${foundGBs.join("/")}GB, requested ${constraints.requestedStorageGB}GB)`;
+      }
+    }
+  }
+
+  const pageSuffix = detectVariantSuffix(headline);
+  if (pageSuffix !== null && pageSuffix !== constraints.requestedSuffix) {
+    return constraints.requestedSuffix === null
+      ? `variant-mismatch (page is about the "${pageSuffix}" trim, requested the base model)`
+      : `variant-mismatch (page is about the "${pageSuffix}" trim, requested "${constraints.requestedSuffix}")`;
+  }
+
+  return null;
+}
+
 // ---- Offered-price sanity floor -------------------------------------------
 // Parses the "OFFERED PRICE: <number> <currency>" line (also built by
 // analyze.ts's buildPrompt) so the final computed range can be sanity
@@ -180,6 +297,14 @@ function collectRawPricesFromOneText(text: string, source: string, url: string):
   while ((m = re.exec(text)) !== null) {
     const raw = m[0];
     const idx = m.index;
+
+    // BUG FOUND: a bare percentage ("Save 20%") right before/after a price
+    // in the same sentence ("Save 20% ($199)") put a currency marker within
+    // CURRENCY_WINDOW_CHARS of the "20", so "20" was extracted as if it were
+    // a price in its own right. Reject any number immediately followed by
+    // "%" (optionally after whitespace) before doing anything else with it.
+    const immediatelyAfter = text.slice(idx + raw.length, idx + raw.length + 2);
+    if (/^\s*%/.test(immediatelyAfter)) continue;
 
     const currencyBefore = text.slice(Math.max(0, idx - CURRENCY_WINDOW_CHARS), idx);
     const currencyAfter = text.slice(idx + raw.length, idx + raw.length + CURRENCY_WINDOW_CHARS);
@@ -260,7 +385,28 @@ const WIDE_REJECT_KEYWORDS: { reason: string; regex: RegExp }[] = [
   { reason: "deposit/reservation", regex: /\b(deposit|reservation)\b|عربون|حجز/i },
   { reason: "membership/subscription", regex: /\b(membership|subscription)\b|عضوية|اشتراك/i },
   { reason: "repair/replacement", regex: /\b(repair|replacement)\b|إصلاح|صيانة/i },
+  // BUG FOUND: none of the six below existed at all before this fix, despite
+  // being explicitly called out as common non-price noise. Each is a real,
+  // observed source of "$1 ... $2,899"-style impossible ranges: a financing
+  // widget quoting "$1/day" or "0% EMI" sits right next to a currency
+  // symbol, passes every other filter, and (because it's numerically so far
+  // from the real price) can still survive IQR fencing when the sample is
+  // small — see the new absolute median-ratio guard in removeOutliers below
+  // for the second layer of defense against exactly this.
+  { reason: "EMI", regex: /\bEMI\b|قسط(?!\s*شهري)/i },
+  { reason: "cashback", regex: /cash\s?back|كاش\s*باك|استرداد\s*نقدي/i },
+  { reason: "per-day financing", regex: /(\/\s*day\b|per\s+day\b|as\s+low\s+as)|يوميا(ً)?|باليوم/i },
 ];
+
+// Review/rating counts ("4.5 stars, 1,234 reviews") get their own narrow,
+// close-proximity check rather than the WIDE 60-char list above: a page
+// TITLE containing the word "review" (e.g. "iPhone 15 Pro Max review") is
+// extremely common and sits well within the 60-char wide window of any
+// price appearing early in that page's content, which would otherwise
+// reject a perfectly legitimate price just because of its own title. Only
+// reject when the keyword sits immediately next to the number itself.
+const REVIEW_RATING_NEAR_WINDOW_CHARS = 12;
+const REVIEW_RATING_KEYWORD_REGEX = /\b(reviews?|ratings?|stars?)\b|out\s+of\s+5|تقييم(ات)?|مراجع(ة|ات)|نجوم/i;
 
 // "from" / "up to" / "starting at" / "starting from" — only rejected when
 // immediately preceding the number, to avoid nuking legitimate hits like
@@ -311,6 +457,15 @@ function applyKeywordFilter(
           rejectReason = reason;
           break;
         }
+      }
+    }
+
+    if (!rejectReason) {
+      const after = hit.context.slice(hit.context.indexOf("]") + 1);
+      const nearBefore = before.slice(Math.max(0, before.length - REVIEW_RATING_NEAR_WINDOW_CHARS));
+      const nearAfter = after.slice(0, REVIEW_RATING_NEAR_WINDOW_CHARS);
+      if (REVIEW_RATING_KEYWORD_REGEX.test(nearBefore) || REVIEW_RATING_KEYWORD_REGEX.test(nearAfter)) {
+        rejectReason = "review/rating count";
       }
     }
 
@@ -473,8 +628,25 @@ function removeOutliers(prices: WeightedPrice[]): OutlierResult {
   const q1 = percentile(expanded, 0.25);
   const q3 = percentile(expanded, 0.75);
   const iqr = q3 - q1;
-  const lowerBound = q1 - 1.5 * iqr;
-  const upperBound = q3 + 1.5 * iqr;
+  // BUG FOUND: with a small number of distinct points (which is the common
+  // case here — usually 4-8 Tavily results), the 1.5x IQR fence can be
+  // extremely permissive. Example: [1, 800, 1200, 2899] gives a lower fence
+  // of roughly -936, so the stray "$1" (almost certainly a "$1/day"
+  // financing figure or similar noise that slipped past every keyword
+  // filter) is never flagged as an IQR outlier at all — it's what produced
+  // "1 USD -> 2,899 USD". IQR fencing has no concept of an absolute floor
+  // relative to the group's own center, so it's blind to this. Fix: also
+  // enforce a hard ratio-to-median guard as a second, independent check —
+  // any value less than 15% or more than 6x the group median is dropped
+  // regardless of where the IQR fence lands. This never fires on a
+  // legitimately tight real-world price spread (a genuine market range
+  // rarely spans more than 6x low-to-high for the *same* SKU/variant), but
+  // reliably catches leftover extraction noise.
+  const med = median(expanded);
+  const MEDIAN_RATIO_FLOOR = 0.15;
+  const MEDIAN_RATIO_CEILING = 6;
+  const lowerBound = Math.max(q1 - 1.5 * iqr, med * MEDIAN_RATIO_FLOOR);
+  const upperBound = Math.min(q3 + 1.5 * iqr, med * MEDIAN_RATIO_CEILING);
 
   const kept: WeightedPrice[] = [];
   const removed: (WeightedPrice & { reason: string })[] = [];
@@ -482,7 +654,7 @@ function removeOutliers(prices: WeightedPrice[]): OutlierResult {
     if (p.value >= lowerBound && p.value <= upperBound) {
       kept.push(p);
     } else {
-      removed.push({ ...p, reason: `outlier (outside [${lowerBound.toFixed(2)}, ${upperBound.toFixed(2)}] IQR fence)` });
+      removed.push({ ...p, reason: `outlier (outside [${lowerBound.toFixed(2)}, ${upperBound.toFixed(2)}] IQR+median-ratio fence, median=${med.toFixed(2)})` });
     }
   }
 
@@ -633,9 +805,31 @@ export async function computeMarketPriceRange(
     console.log(`[PriceExtraction] Step 0 — masking model-number occurrences of "${productName}" before scanning.`);
   }
 
+  // ---- Step 0.5: drop results about a conflicting storage tier / trim ----
+  const variantConstraints = extractVariantConstraints(productName);
+  console.log(
+    `[PriceExtraction] Step 0.5 — requested variant: storage=${variantConstraints.requestedStorageGB ?? "any"}GB, suffix=${variantConstraints.requestedSuffix ?? "base/none"}.`
+  );
+  const variantMatchedResults: TavilyResultForPricing[] = [];
+  for (const r of tavilyResults) {
+    const conflict = resultConflictsWithVariant(r, variantConstraints);
+    if (conflict) {
+      console.log(`[PriceExtraction] Step 0.5 — dropping result "${r.title}" (${r.url}) — ${conflict}`);
+    } else {
+      variantMatchedResults.push(r);
+    }
+  }
+  console.log(
+    `[PriceExtraction] Step 0.5 — kept ${variantMatchedResults.length}/${tavilyResults.length} result(s) after variant matching.`
+  );
+  if (variantMatchedResults.length === 0) {
+    console.log("[PriceExtraction] Every result conflicted with the requested variant. Returning null.");
+    return null;
+  }
+
   // ---- Step 1: extract every possible money value ----
   const rawHits: RawPriceHit[] = [];
-  for (const r of tavilyResults) {
+  for (const r of variantMatchedResults) {
     // Tavily's curated `content` snippet can end before the actual price
     // (common on regional Arabic listing pages). `rawContent`, when
     // present, is the fuller page scrape — scan a capped slice of it too

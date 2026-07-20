@@ -1,11 +1,15 @@
+import { loggedFetch, logEnvPresence } from "./_logger.js";
+
 export async function sendEmail(to: string, subject: string, html: string) {
+  console.log("[Resend] Sending email. to:", to, "| subject:", subject);
   const apiKey = process.env.RESEND_API_KEY;
+  logEnvPresence({ RESEND_API_KEY: apiKey });
   if (!apiKey) {
     console.error("[Resend] Missing RESEND_API_KEY");
     return;
   }
   try {
-    await fetch("https://api.resend.com/emails", {
+    const res = await loggedFetch("resend.sendEmail", "https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -18,7 +22,10 @@ export async function sendEmail(to: string, subject: string, html: string) {
         html,
       }),
     });
-  } catch (e) {
-    console.error("[Resend] Failed to send email:", e);
+    console.log("[Resend] Email send request completed. status:", res.status);
+  } catch (e: any) {
+    console.error("[Resend] Failed to send email:");
+    console.error(e);
+    console.error(e?.stack);
   }
 }

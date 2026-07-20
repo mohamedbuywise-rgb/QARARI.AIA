@@ -36,6 +36,22 @@ export function ReportScreen() {
     return null;
   }
 
+  // Temporary debug log — remove once the null/undefined-field rendering
+  // issue is confirmed fixed in production.
+  console.log("FULL AI RESPONSE:", report);
+
+  // ---- Defensive formatting helpers ----
+  // The AI is allowed to return null for pricing fields when it has no
+  // reliable market data (see api/analyze.ts), and any of the optional
+  // fields can legitimately be missing. Never assume a field exists before
+  // calling a method on it.
+  const naLabel = lang === "ar" ? "غير متوفر" : "N/A";
+  const fmtPrice = (n: unknown): string => (typeof n === "number" && !Number.isNaN(n) ? n.toLocaleString() : naLabel);
+  const bilingualSafe = (bt: { ar?: string; en?: string } | null | undefined): string =>
+    (lang === "ar" ? bt?.ar : bt?.en) ?? "";
+  const bilingualArrSafe = (ba: { ar?: string[]; en?: string[] } | null | undefined): string[] =>
+    (lang === "ar" ? ba?.ar : ba?.en) ?? [];
+
   const isExample = report.id.startsWith("demo-");
   const isSaved = history.some((h) => h.id === report.id);
 
@@ -50,7 +66,7 @@ export function ReportScreen() {
     fair: { color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30" },
     bad: { color: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/30" },
   };
-  const vc = verdictConfig[report.verdict];
+  const vc = verdictConfig[report.verdict] ?? verdictConfig.fair;
 
   const ProductIcon = useMemo(() => getCategoryIcon(report.product), [report.product]);
 
@@ -62,7 +78,7 @@ export function ReportScreen() {
   };
 
   const handleShare = async () => {
-    const summary = `${t("appName")} — ${report.product}\n${t(report.verdict === "good" ? "goodDeal" : report.verdict === "fair" ? "fairDeal" : "badDeal")}\n${t("offeredPrice")}: ${report.offeredPrice.toLocaleString()} ${cShort}\n${t("fairPriceRange")}: ${report.marketFairPriceMin.toLocaleString()}-${report.marketFairPriceMax.toLocaleString()} ${cShort}\n${t("potentialSavings")}: ${report.moneySaved.toLocaleString()} ${cShort}`;
+    const summary = `${t("appName")} — ${report.product}\n${t(report.verdict === "good" ? "goodDeal" : report.verdict === "fair" ? "fairDeal" : "badDeal")}\n${t("offeredPrice")}: ${fmtPrice(report.offeredPrice)} ${cShort}\n${t("fairPriceRange")}: ${fmtPrice(report.marketFairPriceMin)}-${fmtPrice(report.marketFairPriceMax)} ${cShort}\n${t("potentialSavings")}: ${fmtPrice(report.moneySaved)} ${cShort}`;
     if (navigator.share) {
       try { await navigator.share({ text: summary, title: t("appName") }); } catch {}
     } else {
@@ -72,13 +88,13 @@ export function ReportScreen() {
   };
 
   const handleCopyNegotiation = () => {
-    const text = lang === "ar" ? report.negotiationScript.ar : report.negotiationScript.en;
+    const text = bilingualSafe(report.negotiationScript);
     navigator.clipboard.writeText(text);
     showToast(t("copied"));
   };
 
   const handleWhatsAppShare = () => {
-    const text = lang === "ar" ? report.negotiationScript.ar : report.negotiationScript.en;
+    const text = bilingualSafe(report.negotiationScript);
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -193,8 +209,8 @@ export function ReportScreen() {
     navigate("compare");
   };
 
-  const bilingual = (bt: { ar: string; en: string }) => (lang === "ar" ? bt.ar : bt.en);
-  const bilingualArr = (ba: { ar: string[]; en: string[] }) => (lang === "ar" ? ba.ar : ba.en);
+  const bilingual = (bt: { ar: string; en: string } | null | undefined) => bilingualSafe(bt);
+  const bilingualArr = (ba: { ar: string[]; en: string[] } | null | undefined) => bilingualArrSafe(ba);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 pb-24">
@@ -214,14 +230,14 @@ export function ReportScreen() {
           <h1 className="truncate font-serif text-2xl font-bold text-amber-400">{report.product}</h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <span className="rounded-lg bg-zinc-800/60 px-2.5 py-1 text-sm text-zinc-300">
-              {report.offeredPrice.toLocaleString()} {cShort}
+              {fmtPrice(report.offeredPrice)} {cShort}
             </span>
             <span className={`rounded-lg ${vc.bg} ${vc.border} border px-2.5 py-1 text-sm font-medium ${vc.color}`}>
               {t(report.verdict === "good" ? "goodDeal" : report.verdict === "fair" ? "fairDeal" : "badDeal")}
             </span>
-            {report.moneySaved > 0 && (
+            {typeof report.moneySaved === "number" && report.moneySaved > 0 && (
               <span className="rounded-lg bg-emerald-500/10 px-2.5 py-1 text-sm font-medium text-emerald-400 ring-1 ring-emerald-500/20">
-                {t("moneySaved")}: {report.moneySaved.toLocaleString()} {cShort}
+                {t("moneySaved")}: {fmtPrice(report.moneySaved)} {cShort}
               </span>
             )}
           </div>
@@ -236,14 +252,16 @@ export function ReportScreen() {
         <div className="flex items-center justify-between rounded-xl bg-zinc-800/40 p-4">
           <div className="text-center">
             <p className="text-xs text-zinc-500">{t("offeredPrice")}</p>
-            <p className="mt-1 text-lg font-bold text-zinc-100">{report.offeredPrice.toLocaleString()}</p>
+            <p className="mt-1 text-lg font-bold text-zinc-100">{fmtPrice(report.offeredPrice)}</p>
             <p className="text-xs text-zinc-500">{cShort}</p>
           </div>
           <div className="h-12 w-px bg-zinc-700" />
           <div className="text-center">
             <p className="text-xs text-zinc-500">{t("fairPriceRange")}</p>
             <p className="mt-1 text-lg font-bold text-amber-400">
-              {report.marketFairPriceMin.toLocaleString()}–{report.marketFairPriceMax.toLocaleString()}
+              {report.marketFairPriceMin === null && report.marketFairPriceMax === null
+                ? naLabel
+                : `${fmtPrice(report.marketFairPriceMin)}–${fmtPrice(report.marketFairPriceMax)}`}
             </p>
             <p className="text-xs text-zinc-500">{cShort}</p>
           </div>
@@ -257,16 +275,16 @@ export function ReportScreen() {
             <Users className="h-5 w-5" /> {t("communityInsightsTitle")}
           </h2>
           <p className="text-sm text-zinc-300">
-            <span className="font-bold text-emerald-400">{report.communityInsights.analyzedCount.toLocaleString()}</span>{" "}
+            <span className="font-bold text-emerald-400">{fmtPrice(report.communityInsights.analyzedCount)}</span>{" "}
             {t("communityAnalyzedCount")}
           </p>
-          {report.communityInsights.recentPrices.length > 1 && (
+          {(report.communityInsights.recentPrices ?? []).length > 1 && (
             <div className="mt-3 border-t border-emerald-500/15 pt-3">
               <p className="mb-2 text-xs text-zinc-500">{t("communityRecentPrices")}</p>
               <div className="flex flex-wrap gap-2">
-                {report.communityInsights.recentPrices.map((p, i) => (
+                {(report.communityInsights.recentPrices ?? []).map((p, i) => (
                   <span key={i} className="rounded-lg bg-zinc-800/60 px-2.5 py-1 text-sm text-zinc-200">
-                    {p.toLocaleString()} {cShort}
+                    {fmtPrice(p)} {cShort}
                   </span>
                 ))}
               </div>
@@ -322,7 +340,7 @@ export function ReportScreen() {
             report.regretLevel === "medium" ? "bg-amber-500/10 text-amber-400" :
             "bg-red-500/10 text-red-400"
           }`}>
-            {t(report.regretLevel)}
+            {t(report.regretLevel ?? "medium")}
           </span>
           <p className="mt-2 text-sm text-zinc-300">{bilingual(report.regretJustification)}</p>
         </div>
@@ -397,8 +415,8 @@ export function ReportScreen() {
           <Compass className="h-5 w-5" /> {t("betterAlternatives")}
         </h2>
         <div className="space-y-3">
-          {report.betterAlternatives.map((alt, i) => {
-            const AltIcon = getCategoryIcon(alt.name);
+          {(report.betterAlternatives ?? []).map((alt, i) => {
+            const AltIcon = getCategoryIcon(alt?.name ?? "");
             return (
               <div key={i} className="flex items-start gap-3 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4">
                 <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-zinc-800 via-zinc-900 to-black shadow-md ring-1 ring-amber-500/20">
@@ -407,13 +425,13 @@ export function ReportScreen() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="truncate text-sm font-bold text-zinc-100">{alt.name}</h3>
+                    <h3 className="truncate text-sm font-bold text-zinc-100">{alt?.name ?? naLabel}</h3>
                     <span className="shrink-0 rounded-lg bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-400">
-                      {alt.estimatedPrice.toLocaleString()} {cShort}
+                      {fmtPrice(alt?.estimatedPrice)} {cShort}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-400">{bilingual(alt.reason)}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{bilingual(alt.whySuitable)}</p>
+                  <p className="mt-1 text-xs text-zinc-400">{bilingual(alt?.reason)}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{bilingual(alt?.whySuitable)}</p>
                 </div>
               </div>
             );

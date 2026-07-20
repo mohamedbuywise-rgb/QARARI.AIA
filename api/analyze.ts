@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
+import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
 const FREE_MONTHLY_LIMIT = 5;
 const PREMIUM_MONTHLY_LIMIT = 50; // fair-use cap for paid subscribers, prevents runaway AI cost from outlier usage
@@ -10,6 +11,122 @@ const CACHE_TTL_HOURS = 72; // how long a cached market-research result stays va
 function normalizeCacheKey(product: string, currency: string): string {
   const normalizedProduct = product.trim().toLowerCase().replace(/\s+/g, " ");
   return `${normalizedProduct}::${currency.trim().toUpperCase()}`;
+}
+
+// ---- AI response shape validation/normalization ----
+// There is no Zod schema anywhere in this backend (checked the whole repo) —
+// the previous "validator" was just three inline `typeof` checks in the
+// handler below, which threw away all detail and logged nothing but
+// "AI response failed shape validation". This replaces that with:
+//   1. a real field-by-field check that records exactly what was wrong, and
+//   2. normalization that fills in safe defaults for non-critical fields
+//      instead of 502'ing the whole request over something like a missing
+//      `hiddenRisks` array.
+interface FieldIssue {
+  field: string;
+  expected: string;
+  received: string;
+  value: unknown;
+}
+
+function describeType(v: unknown): string {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  if (Array.isArray(v)) return "array";
+  return typeof v;
+}
+
+// number OR null are both valid per the prompt ("marketFairPriceMin/Max/Mid":
+// number | null — the model is told to return null when it has no reliable
+// pricing signal instead of inventing a figure).
+function isNumberOrNull(v: unknown): v is number | null {
+  return v === null || typeof v === "number";
+}
+
+function bilingualStrings(v: any): { ar: string; en: string } {
+  return {
+    ar: typeof v?.ar === "string" ? v.ar : "",
+    en: typeof v?.en === "string" ? v.en : "",
+  };
+}
+
+function bilingualArrays(v: any): { ar: string[]; en: string[] } {
+  return {
+    ar: Array.isArray(v?.ar) ? v.ar : [],
+    en: Array.isArray(v?.en) ? v.en : [],
+  };
+}
+
+// Only these are treated as essential — everything else gets a safe default
+// rather than failing the whole request. `verdict` and the three price
+// fields are the ones the rest of the handler (moneySaved, verdict badge,
+// etc.) actually depends on existing in some valid form.
+function validateAndNormalizeAnalysis(parsed: any): { ok: true; data: any } | { ok: false; issues: FieldIssue[] } {
+  const issues: FieldIssue[] = [];
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    issues.push({ field: "(root)", expected: "object", received: describeType(parsed), value: parsed });
+    return { ok: false, issues };
+  }
+
+  if (typeof parsed.verdict !== "string" || !["good", "fair", "bad"].includes(parsed.verdict)) {
+    issues.push({
+      field: "verdict",
+      expected: '"good" | "fair" | "bad"',
+      received: describeType(parsed.verdict),
+      value: parsed.verdict,
+    });
+  }
+
+  for (const field of ["marketFairPriceMin", "marketFairPriceMax", "marketFairPriceMid"]) {
+    if (!isNumberOrNull(parsed[field])) {
+      issues.push({
+        field,
+        expected: "number | null",
+        received: describeType(parsed[field]),
+        value: parsed[field],
+      });
+    }
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  // marketFairPriceMid: derive from min/max if the model omitted it (as null)
+  // but both bounds are real numbers. Otherwise trust whatever the model gave
+  // (including null, when neither bound is available).
+  let marketFairPriceMid: number | null = parsed.marketFairPriceMid;
+  if (marketFairPriceMid === null && typeof parsed.marketFairPriceMin === "number" && typeof parsed.marketFairPriceMax === "number") {
+    marketFairPriceMid = Math.round((parsed.marketFairPriceMin + parsed.marketFairPriceMax) / 2);
+  }
+
+  // Non-critical fields: normalize to safe defaults instead of throwing 502.
+  const data = {
+    ...parsed,
+    marketFairPriceMid,
+    reasoningPoints: bilingualArrays(parsed.reasoningPoints),
+    pros: bilingualArrays(parsed.pros),
+    cons: bilingualArrays(parsed.cons),
+    hiddenRisks: bilingualArrays(parsed.hiddenRisks),
+    preRecommendation: bilingualStrings(parsed.preRecommendation),
+    futureCompatibility: bilingualStrings(parsed.futureCompatibility),
+    regretJustification: bilingualStrings(parsed.regretJustification),
+    finalTip: bilingualStrings(parsed.finalTip),
+    negotiationScript: bilingualStrings(parsed.negotiationScript),
+    regretLevel: ["low", "medium", "high"].includes(parsed.regretLevel) ? parsed.regretLevel : "medium",
+    betterAlternatives: Array.isArray(parsed.betterAlternatives) ? parsed.betterAlternatives : [],
+    ...(parsed.negotiationScriptVariants
+      ? {
+          negotiationScriptVariants: {
+            polite: bilingualStrings(parsed.negotiationScriptVariants?.polite),
+            firm: bilingualStrings(parsed.negotiationScriptVariants?.firm),
+          },
+        }
+      : {}),
+  };
+
+  return { ok: true, data };
 }
 
 function buildPrompt(opts: {
@@ -55,9 +172,9 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 
 {
   "verdict": "good" | "fair" | "bad",
-  "marketFairPriceMin": number,
-  "marketFairPriceMax": number,
-  "marketFairPriceMid": number,
+  "marketFairPriceMin": number | null,
+  "marketFairPriceMax": number | null,
+  "marketFairPriceMid": number | null,
   "reasoningPoints": { "ar": string[], "en": string[] },
   "preRecommendation": { "ar": string, "en": string },
   "futureCompatibility": { "ar": string, "en": string },
@@ -72,15 +189,27 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 }
 
 Rules:
-- marketFairPriceMin/Max must be a REAL researched range based on current market data you find via search, never a guess.
+- PRICE SOURCE OF TRUTH: if the LIVE WEB SEARCH CONTEXT below contains a section titled "BACKEND-EXTRACTED MARKET PRICE DATA", that block is authoritative — copy its marketFairPriceMin/Mid/Max values into your JSON EXACTLY as given. Do not recalculate, adjust, round differently, or re-derive them from the raw search results in that case.
+- Only if that "BACKEND-EXTRACTED MARKET PRICE DATA" section is ABSENT are you allowed to derive marketFairPriceMin/Max yourself from the raw search results — and even then, you must IGNORE any figure that is a trade-in value, financing/installment/monthly payment, coupon or discount amount, shipping/tax fee, AppleCare/insurance/warranty price, accessory/case/charger/cable price, gift-card value, auction/bid amount, deposit/reservation/membership/subscription fee, or repair/replacement cost — only actual full retail selling-price listings for the product itself count. When in doubt, prefer the range implied by well-known official/major retailers over unknown sources.
 - marketFairPriceMid is the midpoint of min/max.
-- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax.
+- If — and only if — the live search results (including the backend-extracted block, when present) give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
+- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
 - All prices in ${currency}.
 - Return ONLY the JSON object, nothing else.`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const start = Date.now();
+  logRequestStart(req);
+  logEnvPresence({
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    TAVILY_API_KEY: process.env.TAVILY_API_KEY,
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+
   if (req.method !== "POST") {
+    console.warn("[/api/analyze] Rejected non-POST method:", req.method);
     return res.status(405).json({ error: "method_not_allowed" });
   }
 
@@ -97,18 +226,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       imageBase64, // optional: { data, mimeType }
     } = req.body || {};
 
+    console.log("[/api/analyze] Validating input...");
     if (!product || typeof product !== "string" || !offeredPrice || Number(offeredPrice) <= 0) {
+      console.warn("[/api/analyze] Invalid input:", { product, offeredPrice });
       return res.status(400).json({ error: "invalid_input" });
     }
+    console.log("[/api/analyze] Input OK. product:", product, "| offeredPrice:", offeredPrice, "| currency:", currency);
 
+    console.log("Checking authentication...");
     const admin = getSupabaseAdmin();
     const user = await getAuthedUser(req);
+    console.log("Authentication OK. Signed in:", !!user, user ? `(userId: ${user.id})` : "(guest)");
 
     let tier: "free" | "premium" = "free";
     let quotaOk = true;
 
     if (user) {
       // ---- SIGNED-IN USER: check/enforce quota tied to their account row ----
+      console.log("[/api/analyze] Loading user row for quota check...");
       const { data: userRow, error: userErr } = await admin
         .from("users")
         .select("tier, subscription_end_date, scans_used_this_month, scans_reset_at")
@@ -116,8 +251,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single();
 
       if (userErr || !userRow) {
+        console.error("[/api/analyze] user_not_found. Supabase error:", userErr);
         return res.status(404).json({ error: "user_not_found" });
       }
+      console.log("[/api/analyze] User row loaded. tier:", userRow.tier, "| scansUsed:", userRow.scans_used_this_month);
 
       // Auto-revert to Free if subscription expired (Section 16)
       const now = new Date();
@@ -144,11 +281,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!quotaOk) {
+        console.warn("[/api/analyze] Quota exceeded for user:", user.id, "| tier:", tier);
         return res.status(403).json({ error: "quota_exceeded" });
       }
     } else {
       // ---- GUEST: track by IP address ----
       const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
+      console.log("[/api/analyze] Guest request. IP:", ip);
 
       const { data: guestRow } = await admin.from("guest_usage").select("*").eq("ip_address", ip).single();
       const now = new Date();
@@ -161,6 +300,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (scansUsed >= FREE_MONTHLY_LIMIT) {
+        console.warn("[/api/analyze] Guest quota exceeded. IP:", ip, "| scansUsed:", scansUsed);
         return res.status(403).json({ error: "quota_exceeded" });
       }
 
@@ -178,6 +318,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // same market-research result (same product + currency) within the TTL
     // window instead of paying for a brand-new Groq completion + Tavily
     // search call.
+    console.log("Loading cache...");
     const cacheKey = normalizeCacheKey(product, currency);
     const cacheCutoff = new Date(Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
@@ -187,6 +328,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq("cache_key", cacheKey)
       .gte("created_at", cacheCutoff)
       .single();
+    console.log("Cache loaded. Hit:", !!cachedRow, "| cacheKey:", cacheKey);
 
     let parsed: any;
     let modelUsed: string;
@@ -195,22 +337,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Cache hit — skip the AI pipeline entirely, no token cost, no search cost.
       parsed = cachedRow.parsed;
       modelUsed = cachedRow.model_used;
+      console.log("[/api/analyze] Using cached analysis. modelUsed:", modelUsed);
     } else {
       // ---- Call Groq + Tavily (Section 6 + Section 14A tier branching + Section 2 fallback) ----
       const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, language, tier });
 
       let aiResult;
       try {
+        logStep("Calling AI pipeline (Groq + Tavily)...");
         aiResult = await callAiWithFallback(prompt, imageBase64);
-      } catch (e) {
+        console.log("[/api/analyze] AI pipeline succeeded. modelUsed:", aiResult.modelUsed, "| usage:", aiResult.usage);
+      } catch (e: any) {
         // Section 10: both models failed — clear translated error, not a silent failure
-        return res.status(502).json({ error: "analysis_failed" });
+        console.error("[/api/analyze] AI pipeline failed (both primary and fallback exhausted):");
+        console.error(e);
+        console.error(e?.stack);
+        return res.status(502).json({ error: "analysis_failed", reason: e?.message });
       }
 
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
       // Section 25: log AI usage/cost for every real Groq call, win or lose downstream.
+      console.log("Saving database...");
       await logAiUsage(admin, {
         endpoint: "analyze",
         model: aiResult.modelUsed,
@@ -226,20 +375,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model_used: modelUsed,
         created_at: new Date().toISOString(),
       });
+      console.log("Saving database... done");
     }
 
-    // Basic shape validation before trusting the response
-    if (
-      typeof parsed?.verdict !== "string" ||
-      typeof parsed?.marketFairPriceMin !== "number" ||
-      typeof parsed?.marketFairPriceMax !== "number"
-    ) {
-      return res.status(502).json({ error: "analysis_invalid" });
+    // Field-level shape validation + normalization (see validateAndNormalizeAnalysis above).
+    const validation = validateAndNormalizeAnalysis(parsed);
+    if (!validation.ok) {
+      console.error("[/api/analyze] Validation failed");
+      for (const issue of validation.issues) {
+        console.error(
+          `Field: ${issue.field}\nExpected: ${issue.expected}\nReceived: ${issue.received}\nValue: ${JSON.stringify(issue.value)}`
+        );
+      }
+      console.error("Raw AI JSON:", JSON.stringify(parsed)?.slice(0, 4000));
+      return res.status(502).json({
+        error: "analysis_invalid",
+        issues: validation.issues.map(({ field, expected, received }) => ({ field, expected, received })),
+      });
     }
+    parsed = validation.data;
 
-    const marketFairPriceMid =
-      parsed.marketFairPriceMid ?? Math.round((parsed.marketFairPriceMin + parsed.marketFairPriceMax) / 2);
-    const moneySaved = Math.max(0, marketFairPriceMid - Number(offeredPrice));
+    const marketFairPriceMid: number | null = parsed.marketFairPriceMid;
+    const moneySaved = marketFairPriceMid === null ? null : Math.max(0, marketFairPriceMid - Number(offeredPrice));
 
     // ---- Community insights (Section 27 — REAL social proof, never fabricated) ----
     // Log this user's real offered price as an anonymous event, then look at
@@ -297,6 +454,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     // ---- Record usage AFTER a successful analysis (never before) ----
+    console.log("[/api/analyze] Recording usage...");
     if (user) {
       const { data: row } = await admin.from("users").select("scans_used_this_month").eq("id", user.id).single();
       await admin.from("users").update({ scans_used_this_month: (row?.scans_used_this_month || 0) + 1 }).eq("id", user.id);
@@ -306,9 +464,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await admin.from("guest_usage").update({ scans_used_this_month: (row?.scans_used_this_month || 0) + 1 }).eq("ip_address", ip);
     }
 
+    console.log("Returning response...");
+    logRequestSuccess(start);
     return res.status(200).json(result);
   } catch (err: any) {
-    console.error("[/api/analyze] Unexpected error:", err);
-    return res.status(500).json({ error: "server_error" });
+    logUnhandledError(err, start);
+    return res.status(500).json({
+      error: "server_error",
+      // Debug-only fields — safe to keep during development since this is
+      // additive info, not a change to the normal success-path response shape.
+      message: err?.message,
+      stack: err?.stack,
+    });
   }
 }

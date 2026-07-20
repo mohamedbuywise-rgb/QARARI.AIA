@@ -1,9 +1,18 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isValidAdmin } from "./_auth.js";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
+import { logRequestStart, logRequestSuccess, logUnhandledError } from "../_logger.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!isValidAdmin(req)) return res.status(401).json({ error: "unauthorized" });
+  const start = Date.now();
+  logRequestStart(req);
+
+  console.log("Checking authentication...");
+  if (!isValidAdmin(req)) {
+    console.warn("[/api/admin/ai-costs] Rejected — invalid admin credentials");
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  console.log("Authentication OK");
 
   const admin = getSupabaseAdmin();
   const now = new Date();
@@ -11,12 +20,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
   try {
+    console.log("Loading ai_usage_log for this month...");
     const { data: monthRows, error: monthErr } = await admin
       .from("ai_usage_log")
       .select("model, endpoint, tier, total_tokens, estimated_cost_usd, created_at")
       .gte("created_at", startOfMonth);
 
-    if (monthErr) return res.status(500).json({ error: "server_error" });
+    if (monthErr) {
+      console.error("[/api/admin/ai-costs] Supabase select failed:", monthErr);
+      return res.status(500).json({ error: "server_error" });
+    }
+    console.log("[/api/admin/ai-costs] Loaded", (monthRows || []).length, "rows for this month");
 
     const rows = monthRows || [];
     const totalCostThisMonth = rows.reduce((s, r: any) => s + Number(r.estimated_cost_usd || 0), 0);
@@ -52,6 +66,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const avgCostPerCall = totalCallsThisMonth ? Number((totalCostThisMonth / totalCallsThisMonth).toFixed(5)) : 0;
 
+    console.log("Returning response...");
+    logRequestSuccess(start);
     return res.status(200).json({
       totalCostThisMonth: Number(totalCostThisMonth.toFixed(4)),
       totalCallsThisMonth,
@@ -62,8 +78,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       dailyTrend,
       note: "Costs are ESTIMATED from a configured pricing table in api/_costTracking.ts — update it to match current Groq and Tavily pricing for accuracy.",
     });
-  } catch (err) {
-    console.error("[/api/admin/ai-costs] error:", err);
-    return res.status(500).json({ error: "server_error" });
+  } catch (err: any) {
+    logUnhandledError(err, start);
+    return res.status(500).json({ error: "server_error", message: err?.message, stack: err?.stack });
   }
 }
