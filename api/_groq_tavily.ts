@@ -38,11 +38,18 @@ interface TavilyResult {
   title: string;
   url: string;
   content: string;
+  rawContent: string | null;
 }
 
-async function searchTavily(query: string): Promise<{ results: TavilyResult[]; answer: string | null }> {
+async function searchTavily(
+  query: string,
+  opts: { includeDomains?: string[] } = {}
+): Promise<{ results: TavilyResult[]; answer: string | null }> {
   console.log("Calling Tavily...");
   console.log("[Tavily] Query:", query);
+  if (opts.includeDomains?.length) {
+    console.log("[Tavily] Domain restriction:", opts.includeDomains.join(", "));
+  }
 
   const apiKey = process.env.TAVILY_API_KEY;
   logEnvPresence({ TAVILY_API_KEY: apiKey });
@@ -67,7 +74,16 @@ async function searchTavily(query: string): Promise<{ results: TavilyResult[]; a
         search_depth: "advanced", // better relevance for pricing/spec research than "basic"
         max_results: 8,
         include_answer: true,
-        include_raw_content: false,
+        // `content` alone is Tavily's own curated/trimmed excerpt of the
+        // page and can end up cut off before the actual price appears
+        // (especially on regional Arabic e-commerce pages, where the price
+        // often sits further down than whatever Tavily judged "the most
+        // relevant chunk"). Requesting raw_content too gives the price
+        // extractor in _priceExtraction.ts a full scrape of the page to
+        // scan, at no extra Tavily search-call cost (still one billed
+        // search) — it only adds more text to the same response.
+        include_raw_content: true,
+        ...(opts.includeDomains?.length ? { include_domains: opts.includeDomains } : {}),
       }),
     });
   } catch (error: any) {
@@ -90,7 +106,12 @@ async function searchTavily(query: string): Promise<{ results: TavilyResult[]; a
 
   const json = loggedJsonParse("tavily.search", bodyText);
   const results: TavilyResult[] = Array.isArray(json?.results)
-    ? json.results.map((r: any) => ({ title: r.title || "", url: r.url || "", content: r.content || "" }))
+    ? json.results.map((r: any) => ({
+        title: r.title || "",
+        url: r.url || "",
+        content: r.content || "",
+        rawContent: typeof r.raw_content === "string" ? r.raw_content : null,
+      }))
     : [];
 
   console.log("[Tavily] Results count:", results.length);
@@ -124,6 +145,80 @@ function extractTargetCurrency(prompt: string): string | null {
   if (!match) return null;
   const code = match[1].toUpperCase();
   return isSupportedCurrency(code) ? code : null;
+}
+
+// ---- Regional retry: domain restriction + localized query per currency ---
+// The generic English query ("iPhone 15 Pro Max current market price...")
+// tends to surface global/US-centric pages, which either have no price in
+// the user's currency at all, or bury it under unrelated noise — exactly
+// the kind of page where the price extractor in _priceExtraction.ts ends
+// up with nothing usable. When that happens, callAiWithFallback below
+// retries ONCE with a query and domain list targeted at that currency's
+// actual regional retailers, in the local language where that's Arabic.
+// This list intentionally overlaps with (but is independently maintained
+// from) the source-trust weighting list in _priceExtraction.ts — that list
+// governs how much a price is trusted once found, this one governs where
+// we look in the first place.
+interface CurrencyRegionHint {
+  countryQueryHint: string; // appended to the query so Tavily biases toward this market
+  domains: string[]; // passed as Tavily's include_domains on retry
+  arabicPriceWord: string | null; // non-null => also try an Arabic-language query form
+}
+
+const CURRENCY_REGION_HINTS: Partial<Record<string, CurrencyRegionHint>> = {
+  EGP: {
+    countryQueryHint: "Egypt",
+    domains: [
+      "noon.com",
+      "amazon.eg",
+      "2b.com.eg",
+      "btech.com",
+      "jumia.com.eg",
+      "carrefouregypt.com",
+      "raya.com",
+    ],
+    arabicPriceWord: "سعر في مصر بالجنيه المصري",
+  },
+  SAR: {
+    countryQueryHint: "Saudi Arabia",
+    domains: ["noon.com", "amazon.sa", "jarir.com", "extra.com"],
+    arabicPriceWord: "سعر في السعودية بالريال السعودي",
+  },
+  AED: {
+    countryQueryHint: "UAE",
+    domains: ["noon.com", "amazon.ae", "sharafdg.com"],
+    arabicPriceWord: "سعر في الإمارات بالدرهم",
+  },
+  KWD: {
+    countryQueryHint: "Kuwait",
+    domains: ["noon.com", "xcite.com"],
+    arabicPriceWord: "سعر في الكويت بالدينار الكويتي",
+  },
+  QAR: {
+    countryQueryHint: "Qatar",
+    domains: ["noon.com"],
+    arabicPriceWord: "سعر في قطر بالريال القطري",
+  },
+  BHD: { countryQueryHint: "Bahrain", domains: ["noon.com"], arabicPriceWord: "سعر في البحرين بالدينار البحريني" },
+  OMR: { countryQueryHint: "Oman", domains: ["noon.com"], arabicPriceWord: "سعر في عمان بالريال العماني" },
+  JOD: { countryQueryHint: "Jordan", domains: ["noon.com"], arabicPriceWord: "سعر في الأردن بالدينار الأردني" },
+  USD: { countryQueryHint: "USA", domains: ["amazon.com", "bestbuy.com", "bhphotovideo.com", "apple.com"], arabicPriceWord: null },
+  GBP: { countryQueryHint: "UK", domains: ["amazon.co.uk", "currys.co.uk", "argos.co.uk"], arabicPriceWord: null },
+  EUR: { countryQueryHint: "Europe", domains: ["amazon.de", "amazon.fr", "mediamarkt.de"], arabicPriceWord: null },
+};
+
+// Builds the retry query + domain list for a given prompt/currency. Reuses
+// the same product-name parsing as buildSearchQuery so both queries are
+// anchored to the same product.
+function buildLocalizedRetryQuery(prompt: string, currency: string): { query: string; domains: string[] } | null {
+  const hint = CURRENCY_REGION_HINTS[currency];
+  if (!hint) return null;
+  const single = prompt.match(/PRODUCT:\s*(.+)/i);
+  const product = single ? single[1].trim() : prompt.slice(0, 200);
+  const query = hint.arabicPriceWord
+    ? `${product} ${hint.arabicPriceWord}`
+    : `${product} price ${hint.countryQueryHint} ${currency}`;
+  return { query, domains: hint.domains };
 }
 
 function formatSearchContext(results: TavilyResult[], answer: string | null): string {
@@ -264,11 +359,48 @@ export async function callAiWithFallback(
       const targetCurrency = extractTargetCurrency(prompt);
       if (targetCurrency) {
         try {
-          const priceRange = await computeMarketPriceRange(
-            results,
-            targetCurrency,
-            prompt
-          );
+          let priceRange = await computeMarketPriceRange(results, targetCurrency, prompt);
+          let resultsForContext = results;
+
+          // Retry: the generic query above is English and untargeted, so
+          // it often surfaces global pages with no price in the user's
+          // currency (or noisy pages the extractor can't trust). If that
+          // happened, spend ONE extra Tavily call on a query aimed
+          // specifically at that currency's regional retailers (and, for
+          // Arabic-speaking markets, an Arabic-language query) before
+          // giving up. This only fires when the first attempt failed, so
+          // the common/successful case still costs exactly one Tavily call.
+          if (!priceRange) {
+            const retry = buildLocalizedRetryQuery(prompt, targetCurrency);
+            if (retry) {
+              console.log(
+                `[GroqTavily] First-pass price extraction found nothing usable — retrying with localized query: "${retry.query}"`
+              );
+              try {
+                const { results: retryResults } = await searchTavily(retry.query, { includeDomains: retry.domains });
+                searchQueryCount += 1; // second billed Tavily call
+
+                // Merge, deduping by URL, so the model's context also
+                // benefits from whatever the localized pass turned up.
+                const seenUrls = new Set(results.map((r) => r.url));
+                const merged = [...results, ...retryResults.filter((r) => !seenUrls.has(r.url))];
+                resultsForContext = merged;
+
+                priceRange = await computeMarketPriceRange(merged, targetCurrency, prompt);
+                console.log(
+                  priceRange
+                    ? "[GroqTavily] Localized retry found a usable price."
+                    : "[GroqTavily] Localized retry still found nothing usable — leaving pricing to the model."
+                );
+              } catch (retryErr: any) {
+                console.error("[GroqTavily] Localized retry Tavily call failed:");
+                console.error(retryErr);
+                console.error(retryErr?.stack);
+              }
+            }
+          }
+
+          searchContext = formatSearchContext(resultsForContext, answer);
           if (priceRange) {
             console.log(
               `[GroqTavily] Price extraction: found ${priceRange.sampleSize} price(s) in ${priceRange.sourceCurrency}` +

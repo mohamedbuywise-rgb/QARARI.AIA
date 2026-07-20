@@ -83,6 +83,73 @@ function detectCurrencyInWindow(window: string): SupportedCurrency | null {
   return null;
 }
 
+// ============================================================================
+// STEP 0 -- Mask the product's own model number(s) out of the search text
+// ============================================================================
+//
+// BUG THIS FIXES: product names routinely contain bare numbers that look
+// exactly like prices once a currency word happens to land inside the scan
+// window ("iPhone 15 Pro Max" -> "15" is a model number, not money). This is
+// especially common in Arabic listings where the price is stated BEFORE the
+// product name ("...50,000 جنيه - آيفون 15 برو ماكس"), which puts "جنيه"
+// within CURRENCY_WINDOW_CHARS of the "15" that belongs to the product
+// name, not the price. If that's the only number that survives the
+// pipeline, marketFairPriceMin/Mid/Max all collapse to that one bogus value
+// (e.g. "15-15 EGP" for a phone actually listed around 50,000 EGP).
+//
+// Fix: parse the product name out of the prompt (the "PRODUCT: ..." line
+// built by analyze.ts) and blank out every digit inside any occurrence of
+// that exact phrase, in every Tavily result's text, BEFORE number
+// extraction ever runs. Real prices elsewhere in the text are untouched.
+function extractProductName(productQuery: string | undefined): string | null {
+  if (!productQuery) return null;
+  const m = /PRODUCT:\s*(.+)/i.exec(productQuery);
+  const name = m ? m[1].trim() : null;
+  if (!name) return null;
+  return name.length >= 2 ? name : null;
+}
+
+function maskProductModelNumbers(text: string, productName: string | null): string {
+  if (!productName) return text;
+  const tokens = productName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (tokens.length === 0) return text;
+  const pattern = tokens.join("\\s+");
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, "gi");
+  } catch {
+    return text;
+  }
+  return text.replace(re, (match) => match.replace(/\d/g, "#"));
+}
+
+// ---- Offered-price sanity floor -------------------------------------------
+// Parses the "OFFERED PRICE: <number> <currency>" line (also built by
+// analyze.ts's buildPrompt) so the final computed range can be sanity
+// checked against what the user is actually being asked to pay. A "fair
+// price" of 1% or less of the offered price is essentially never real
+// market data -- it's almost always leftover extraction noise (a spec
+// number, a model number, a rating count, etc.) -- so treating it as
+// "no reliable price found" is far safer than shipping a nonsense range.
+interface OfferedPriceHint {
+  value: number;
+  currency: SupportedCurrency;
+}
+
+function extractOfferedPriceHint(productQuery: string | undefined): OfferedPriceHint | null {
+  if (!productQuery) return null;
+  const m = /OFFERED PRICE:\s*([\d,.]+)\s*([A-Za-z]{2,4})/i.exec(productQuery);
+  if (!m) return null;
+  const value = parseFloat(m[1].replace(/,/g, ""));
+  const currencyRaw = m[2].toUpperCase();
+  if (!isFinite(value) || value <= 0 || !isSupportedCurrency(currencyRaw)) return null;
+  return { value, currency: currencyRaw as SupportedCurrency };
+}
+
+
 // Matches numbers like "58,999", "1,050.50", "999" — but not bare digits
 // glued to letters (so "128GB" alone still won't match without a currency
 // marker nearby, since the caller requires one).
@@ -542,6 +609,7 @@ export interface TavilyResultForPricing {
   title: string;
   url: string;
   content: string;
+  rawContent?: string | null;
 }
 
 // Main entry point. Give it the raw Tavily results (title + url + content)
@@ -558,10 +626,25 @@ export async function computeMarketPriceRange(
   if (!isSupportedCurrency(targetCurrencyRaw)) return null;
   const targetCurrency = targetCurrencyRaw.toUpperCase() as SupportedCurrency;
 
+  // ---- Step 0: mask the product's own model number(s) so they can never
+  // be misread as a price (see maskProductModelNumbers above) ----
+  const productName = extractProductName(productQuery);
+  if (productName) {
+    console.log(`[PriceExtraction] Step 0 — masking model-number occurrences of "${productName}" before scanning.`);
+  }
+
   // ---- Step 1: extract every possible money value ----
   const rawHits: RawPriceHit[] = [];
   for (const r of tavilyResults) {
-    rawHits.push(...collectRawPricesFromOneText(`${r.title} ${r.content}`, r.title, r.url));
+    // Tavily's curated `content` snippet can end before the actual price
+    // (common on regional Arabic listing pages). `rawContent`, when
+    // present, is the fuller page scrape — scan a capped slice of it too
+    // so a price further down the page isn't missed. Capped to keep this
+    // fast and avoid pulling in unrelated boilerplate from very long pages.
+    const RAW_CONTENT_SCAN_CHARS = 4000;
+    const combinedText = `${r.title} ${r.content} ${(r.rawContent || "").slice(0, RAW_CONTENT_SCAN_CHARS)}`;
+    const maskedText = maskProductModelNumbers(combinedText, productName);
+    rawHits.push(...collectRawPricesFromOneText(maskedText, r.title, r.url));
   }
   console.log(`[PriceExtraction] Step 1 — extracted ${rawHits.length} raw price candidate(s).`);
   if (rawHits.length === 0) {
@@ -649,6 +732,21 @@ export async function computeMarketPriceRange(
     `[PriceExtraction] Step 5/6 — final range: min=${range.min} mid=${range.mid} max=${range.max} ${range.targetCurrency}` +
       (sourceCurrency !== targetCurrency ? ` (converted from ${sourceCurrency} at rate ${rate})` : " (no conversion needed)")
   );
+
+  // ---- Final safety net: sanity-check against what the user is actually
+  // being asked to pay. A "fair price" of 1% or less of the offered price
+  // is essentially never real market data — it's almost always leftover
+  // extraction noise (a spec number, model number, rating count, etc.)
+  // that slipped through every earlier filter. Returning null here (which
+  // the caller treats as "let the model fall back to its own reading") is
+  // far safer than shipping a nonsense range like "15-15 EGP".
+  const offeredHint = extractOfferedPriceHint(productQuery);
+  if (offeredHint && offeredHint.currency === targetCurrency && range.max < offeredHint.value / 50) {
+    console.log(
+      `[PriceExtraction] Step 7 (sanity guard) — computed max ${range.max} ${targetCurrency} is under 1/50th of the offered price ${offeredHint.value} ${targetCurrency}. Discarding as extraction noise and returning null.`
+    );
+    return null;
+  }
 
   return range;
 }
