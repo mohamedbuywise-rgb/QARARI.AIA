@@ -189,9 +189,10 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 }
 
 Rules:
-- marketFairPriceMin/Max must be a REAL researched range based on current market data you find via search, never a guess.
+- PRICE SOURCE OF TRUTH: if the LIVE WEB SEARCH CONTEXT below contains a section titled "BACKEND-EXTRACTED MARKET PRICE DATA", that block is authoritative — copy its marketFairPriceMin/Mid/Max values into your JSON EXACTLY as given. Do not recalculate, adjust, round differently, or re-derive them from the raw search results in that case.
+- Only if that "BACKEND-EXTRACTED MARKET PRICE DATA" section is ABSENT are you allowed to derive marketFairPriceMin/Max yourself from the raw search results — and even then, you must IGNORE any figure that is a trade-in value, financing/installment/monthly payment, coupon or discount amount, shipping/tax fee, AppleCare/insurance/warranty price, accessory/case/charger/cable price, gift-card value, auction/bid amount, deposit/reservation/membership/subscription fee, or repair/replacement cost — only actual full retail selling-price listings for the product itself count. When in doubt, prefer the range implied by well-known official/major retailers over unknown sources.
 - marketFairPriceMid is the midpoint of min/max.
-- If — and only if — the live search results give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
+- If — and only if — the live search results (including the backend-extracted block, when present) give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
 - verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
 - All prices in ${currency}.
 - Return ONLY the JSON object, nothing else.`;
