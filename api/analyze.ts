@@ -105,6 +105,7 @@ function validateAndNormalizeAnalysis(parsed: any): { ok: true; data: any } | { 
   const data = {
     ...parsed,
     marketFairPriceMid,
+    marketPriceSummary: bilingualStrings(parsed.marketPriceSummary),
     reasoningPoints: bilingualArrays(parsed.reasoningPoints),
     pros: bilingualArrays(parsed.pros),
     cons: bilingualArrays(parsed.cons),
@@ -137,10 +138,11 @@ function buildPrompt(opts: {
   purpose: string;
   duration: string;
   specs: string;
+  condition: string;
   language: "ar" | "en";
   tier: "free" | "premium";
 }) {
-  const { product, offeredPrice, currency, notes, purpose, duration, specs, tier } = opts;
+  const { product, offeredPrice, currency, notes, purpose, duration, specs, condition, tier } = opts;
 
   const depthInstruction =
     tier === "premium"
@@ -163,6 +165,7 @@ function buildPrompt(opts: {
 
 PRODUCT: ${product}
 OFFERED PRICE: ${offeredPrice} ${currency}
+PRODUCT CONDITION: ${condition}
 USER NOTES: ${notes || "none"}
 USAGE PROFILE — purpose: ${purpose}, expected duration: ${duration}, other specs/preferences: ${specs || "none"}
 
@@ -175,6 +178,7 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
   "marketFairPriceMin": number | null,
   "marketFairPriceMax": number | null,
   "marketFairPriceMid": number | null,
+  "marketPriceSummary": { "ar": string, "en": string },
   "reasoningPoints": { "ar": string[], "en": string[] },
   "preRecommendation": { "ar": string, "en": string },
   "futureCompatibility": { "ar": string, "en": string },
@@ -189,6 +193,11 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 }
 
 Rules:
+- marketPriceSummary: write ONE analytical paragraph (2-4 sentences, natural fluent language, not a bullet list) that reads like a Google AI-generated search overview summarizing the current market price for this exact product — e.g. "بناءً على نتائج البحث، يتراوح سعر [المنتج] في السوق حالياً بين [الحد الأدنى] و[الحد الأقصى]، مع فرق واضح بين الجهاز الجديد والمستعمل/كسر الزيرو إن وُجد". Requirements for this paragraph:
+  - State the current price range explicitly using the SAME marketFairPriceMin/Max numbers you return elsewhere — never a different or rounder-sounding figure.
+  - If the search results distinguish new vs. used/refurbished/"كسر الزيرو" listings, mention both sub-ranges briefly; otherwise just describe the single range you found.
+  - Never include a bare 4-digit number that is actually a calendar year (e.g. a copyright year, "as of 2026", a review/article publish year) as if it were a price — only real listing prices belong in this paragraph.
+  - Do not invent figures: if marketFairPriceMin/Max are null, say plainly that no reliable current price was found in the search results instead of describing a range.
 - PRICE SOURCE OF TRUTH: if the LIVE WEB SEARCH CONTEXT below contains a section titled "BACKEND-EXTRACTED MARKET PRICE DATA", that block is authoritative — copy its marketFairPriceMin/Mid/Max values into your JSON EXACTLY as given. Do not recalculate, adjust, round differently, or re-derive them from the raw search results in that case.
 - Only if that "BACKEND-EXTRACTED MARKET PRICE DATA" section is ABSENT are you allowed to derive marketFairPriceMin/Max yourself from the raw search results — and even then, you must IGNORE any figure that is a trade-in value, financing/installment/monthly payment, coupon or discount amount, shipping/tax fee, AppleCare/insurance/warranty price, accessory/case/charger/cable price, gift-card value, auction/bid amount, deposit/reservation/membership/subscription fee, or repair/replacement cost — only actual full retail selling-price listings for the product itself count. When in doubt, prefer the range implied by well-known official/major retailers over unknown sources.
 - marketFairPriceMid is the midpoint of min/max.
@@ -222,6 +231,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       purpose = "personal",
       duration = "threePlusYears",
       specs = "",
+      condition = "new",
       language = "ar",
       imageBase64, // optional: { data, mimeType }
     } = req.body || {};
@@ -340,7 +350,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log("[/api/analyze] Using cached analysis. modelUsed:", modelUsed);
     } else {
       // ---- Call Groq + Tavily (Section 6 + Section 14A tier branching + Section 2 fallback) ----
-      const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, language, tier });
+      const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, condition, language, tier });
 
       let aiResult;
       try {
@@ -446,6 +456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       product,
       offeredPrice: Number(offeredPrice),
       currency,
+      condition,
       ...parsed,
       marketFairPriceMid,
       moneySaved,

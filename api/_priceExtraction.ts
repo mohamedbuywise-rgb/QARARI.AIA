@@ -317,6 +317,11 @@ function collectRawPricesFromOneText(text: string, source: string, url: string):
     const contextBefore = text.slice(Math.max(0, idx - CONTEXT_WINDOW_CHARS), idx);
     const contextAfter = text.slice(idx + raw.length, idx + raw.length + CONTEXT_WINDOW_CHARS);
 
+    // Reject bare calendar-year noise (see isBareYearLikeNoise above) before
+    // it ever becomes a candidate price — a copyright/date-line year sitting
+    // near a stray currency marker in the same snippet is never a real price.
+    if (isBareYearLikeNoise(raw, contextBefore, contextAfter)) continue;
+
     found.push({
       value,
       currency,
@@ -418,12 +423,56 @@ const NEAR_PREFIX_REJECT_KEYWORDS: { reason: string; regex: RegExp }[] = [
   { reason: "starting-at/from", regex: /(starting\s+(at|from)|up\s+to|\bfrom\b|يبدأ\s*من|ابتداء(ً)?\s*من|حتى|وصولا(ً)?\s*إلى)\s*$/i },
 ];
 
+// BUG FOUND (reported by user): bare calendar-year numbers ("2026", "2025")
+// were being picked up as prices whenever a currency marker happened to sit
+// within CURRENCY_WINDOW_CHARS — e.g. Arabic listing boilerplate like
+// "آخر تحديث لعام 2026 – السعر ... جنيه" or English copyright/date lines
+// like "© 2026 Amazon.com" sitting near a currency word/symbol elsewhere in
+// the same short snippet. A year is numerically small enough that it can
+// also survive the small-sample median guard when only 2-3 prices exist.
+// Fix: reject any bare 4-digit number that (a) falls within a plausible
+// "this is a calendar year, not a price" range around the CURRENT year, and
+// (b) sits near an explicit date/year context marker (copyright symbol,
+// "year"/"since"/"updated"/"as of" in English, or "عام"/"سنة"/"لعام"/"منذ"/
+// "تحديث"/"بتاريخ" in Arabic, or is part of an obvious year-range like
+// "2024-2026"). This is deliberately narrow (context-gated, not a blanket
+// value ban) so a genuine product price that happens to equal a year-like
+// number (e.g. "2,026 EGP" for a cheap accessory, which has a thousands
+// separator and thus never matches \b\d{4}\b as a bare token) is untouched.
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_NOISE_MIN = CURRENT_YEAR - 6;
+const YEAR_NOISE_MAX = CURRENT_YEAR + 3;
+const YEAR_CONTEXT_MARKER_REGEX =
+  /©|\bcopyright\b|\ball\s+rights\s+reserved\b|\bsince\b|\bupdated\b|\bas\s+of\b|\byear\b|عام|لعام|سنة|منذ|تحديث|بتاريخ|حقوق\s*الطبع|حقوق\s*محفوظة/i;
+const YEAR_RANGE_ADJACENT_REGEX = /\b(19|20)\d{2}\s*[-–/]\s*(19|20)\d{2}\b/;
+
+function isBareYearLikeNoise(rawToken: string, contextBefore: string, contextAfter: string): boolean {
+  // Only bare 4-digit tokens with no thousands separator and no decimal
+  // point qualify — "2,026" or "2026.50" are real-looking prices, not years.
+  if (!/^\d{4}$/.test(rawToken)) return false;
+  const value = parseInt(rawToken, 10);
+  if (value < YEAR_NOISE_MIN || value > YEAR_NOISE_MAX) return false;
+
+  const combinedNear = `${contextBefore.slice(-30)} [${rawToken}] ${contextAfter.slice(0, 30)}`;
+  if (YEAR_CONTEXT_MARKER_REGEX.test(combinedNear)) return true;
+  if (YEAR_RANGE_ADJACENT_REGEX.test(combinedNear)) return true;
+  return false;
+}
+
 // "Used" pricing is only noise if the product being searched for is NOT
 // itself a used/refurbished/second-hand listing.
 const USED_KEYWORD_REGEX = /\bused\b(?!\s*for)|مستعمل(ة)?|مجدد(ة)?/i;
 
 function isProductSearchForUsedItem(productQuery: string | undefined): boolean {
   if (!productQuery) return false;
+  // Explicit check for the new PRODUCT CONDITION field first
+  const conditionMatch = productQuery.match(/PRODUCT CONDITION:\s*(.+)/i);
+  if (conditionMatch) {
+    const condition = conditionMatch[1].trim().toLowerCase();
+    if (condition === "used" || condition === "likenew") return true;
+    if (condition === "new") return false;
+  }
+  // Fallback to keyword search in the whole prompt
   return /\b(used|refurbished|second[\s-]?hand|renewed|pre[\s-]?owned)\b|مستعمل|مجدد/i.test(productQuery);
 }
 
@@ -469,8 +518,23 @@ function applyKeywordFilter(
       }
     }
 
-    if (!rejectReason && !searchIsForUsedItem && USED_KEYWORD_REGEX.test(hit.context)) {
-      rejectReason = "used-listing (searched product is not used)";
+    if (!rejectReason) {
+      const isUsedListing = USED_KEYWORD_REGEX.test(hit.context);
+      if (!searchIsForUsedItem && isUsedListing) {
+        rejectReason = "used-listing (searched product is new)";
+      } else if (searchIsForUsedItem && !isUsedListing) {
+        // If we are looking for used/likeNew, but the listing context doesn't mention 'used' or 'مستعمل',
+        // it's likely a new price which would skew the 'used' range too high.
+        // We only apply this if the listing is from a major retailer known for selling both (like Amazon/Noon).
+        const isMajorRetailer = /amazon|noon|jumia|ebay/i.test(hit.url);
+        if (isMajorRetailer && !isUsedListing) {
+           // On major sites, if it doesn't say used, it's new.
+           // rejectReason = "new-listing (searched product is used/likenew)";
+           // Actually, let's be more careful - just mark it for now or keep it.
+           // For now, let's follow the user's request to "exclude any used ads" if "new" is selected.
+           // The existing logic already handles that.
+        }
+      }
     }
 
     if (rejectReason) {

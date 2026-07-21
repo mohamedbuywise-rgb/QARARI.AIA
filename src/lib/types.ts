@@ -46,12 +46,16 @@ export interface AnalysisResult {
   product: string;
   offeredPrice: number;
   currency: string;
+  condition?: string;
   verdict: Verdict;
   // Nullable: the backend now allows the AI to return null for these when it
   // genuinely has no reliable pricing data, instead of inventing a number.
   marketFairPriceMin: number | null;
   marketFairPriceMax: number | null;
   marketFairPriceMid: number | null;
+  // A single Gemini/Google-AI-Overview-style analytical paragraph describing
+  // the current market price range in natural language (new vs used, min/max).
+  marketPriceSummary: BilingualText;
   moneySaved: number | null;
   reasoningPoints: BilingualArray;
   preRecommendation: BilingualText;

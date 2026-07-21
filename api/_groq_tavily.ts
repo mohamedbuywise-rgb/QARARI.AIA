@@ -250,7 +250,15 @@ function buildSearchQuery(prompt: string): string {
   }
   const single = prompt.match(/PRODUCT:\s*(.+)/i);
   const product = single ? single[1].trim() : prompt.slice(0, 200);
-  return `${product} current market price pros and cons review`;
+  const conditionMatch = prompt.match(/PRODUCT CONDITION:\s*(.+)/i);
+  const condition = conditionMatch ? conditionMatch[1].trim() : "";
+  
+  let conditionQuery = "";
+  if (condition === "new") conditionQuery = "brand new sealed";
+  else if (condition === "likeNew") conditionQuery = "like new open box كسر زيرو";
+  else if (condition === "used") conditionQuery = "used مستعمل";
+
+  return `${product} ${conditionQuery} current market price pros and cons review`.trim().replace(/\s+/g, " ");
 }
 
 // Pulls the user's requested currency out of the single-product analyze.ts
@@ -272,7 +280,15 @@ function extractTargetCurrency(prompt: string): string | null {
 function buildPriceSearchQuery(prompt: string, currency: string): string {
   const single = prompt.match(/PRODUCT:\s*(.+)/i);
   const product = single ? single[1].trim() : prompt.slice(0, 200);
-  return `${product} price ${currency}`;
+  const conditionMatch = prompt.match(/PRODUCT CONDITION:\s*(.+)/i);
+  const condition = conditionMatch ? conditionMatch[1].trim() : "";
+
+  let conditionQuery = "";
+  if (condition === "new") conditionQuery = "brand new sealed جديد";
+  else if (condition === "likeNew") conditionQuery = "like new open box كسر زيرو";
+  else if (condition === "used") conditionQuery = "used مستعمل";
+
+  return `${product} ${conditionQuery} price ${currency}`.trim().replace(/\s+/g, " ");
 }
 
 // ---- Regional retry: domain restriction + localized query per currency ---

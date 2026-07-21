@@ -22,6 +22,7 @@ export function InputScreen() {
   const [purpose, setPurpose] = useState("personal");
   const [duration, setDuration] = useState("oneToTwoYears");
   const [specs, setSpecs] = useState("");
+  const [condition, setCondition] = useState("new");
   const [photo, setPhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -96,6 +97,7 @@ export function InputScreen() {
           purpose,
           duration,
           specs: specs.trim(),
+          condition,
           language: lang,
           imageBase64,
         }),
@@ -232,11 +234,26 @@ export function InputScreen() {
             </div>
           </div>
 
+          {/* Product Condition */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-zinc-300">{t("productCondition")}</Label>
+            <Select value={condition} onValueChange={setCondition}>
+              <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-zinc-700 bg-zinc-800 text-zinc-100">
+                <SelectItem value="new" className="focus:bg-amber-500/20 focus:text-amber-400">{t("conditionNew")}</SelectItem>
+                <SelectItem value="likeNew" className="focus:bg-amber-500/20 focus:text-amber-400">{t("conditionLikeNew")}</SelectItem>
+                <SelectItem value="used" className="focus:bg-amber-500/20 focus:text-amber-400">{t("conditionUsed")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Other Specs */}
           <div className="space-y-1.5">
             <Label className="text-sm font-medium text-zinc-300">{t("otherSpecs")}</Label>
             <Input
-              value={specs}
+              value={product === "" ? "" : specs}
               onChange={(e) => setSpecs(e.target.value)}
               placeholder={lang === "ar" ? "اللون، السعة، المميزات..." : "Color, storage, features..."}
               className="border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"

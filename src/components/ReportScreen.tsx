@@ -266,6 +266,11 @@ export function ReportScreen() {
             <p className="text-xs text-zinc-500">{cShort}</p>
           </div>
         </div>
+        {bilingual(report.marketPriceSummary) && (
+          <p className="mt-3 rounded-lg bg-zinc-800/30 p-3 text-sm leading-relaxed text-zinc-300">
+            {bilingual(report.marketPriceSummary)}
+          </p>
+        )}
       </div>
 
       {/* Community Radar — only renders with REAL data (never a fabricated count) */}
