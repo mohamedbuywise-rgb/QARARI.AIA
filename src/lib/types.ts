@@ -1,6 +1,6 @@
 export type Language = "ar" | "en";
 export type Verdict = "good" | "fair" | "bad";
-export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare";
+export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare" | "guide";
 
 export interface Currency {
   code: string;
@@ -90,6 +90,11 @@ export interface CompareResult {
   priceA: number;
   priceB: number;
   currency: string;
+  resaleValueA?: number;
+  resaleValueB?: number;
+  resaleValueTimeframe?: string;
+  warrantyScoreA?: number;
+  warrantyScoreB?: number;
 }
 
 export interface UserProfile {

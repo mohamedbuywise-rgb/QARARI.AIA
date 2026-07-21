@@ -204,6 +204,7 @@ Rules:
 - If — and only if — the live search results (including the backend-extracted block, when present) give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
 - verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
 - All prices in ${currency}.
+- betterAlternatives: Suggest alternatives that are actually better value or similar in price, not 2x more expensive. All estimatedPrice values for betterAlternatives MUST be realistic current market prices in ${currency} and MUST match the specified PRODUCT CONDITION (${condition}).
 - Return ONLY the JSON object, nothing else.`;
 }
 

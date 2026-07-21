@@ -258,7 +258,10 @@ function buildSearchQuery(prompt: string): string {
   else if (condition === "likeNew") conditionQuery = "like new open box كسر زيرو";
   else if (condition === "used") conditionQuery = "used مستعمل";
 
-  return `${product} ${conditionQuery} current market price pros and cons review`.trim().replace(/\s+/g, " ");
+  // IMPROVED: Exclude unreliable sources and focus on official retailers
+  const excludeTerms = "-olx -classified -facebook -marketplace -personal -seller -auction";
+
+  return `${product} ${conditionQuery} current market price pros and cons review ${excludeTerms}`.trim().replace(/\s+/g, " ");
 }
 
 // Pulls the user's requested currency out of the single-product analyze.ts
@@ -288,7 +291,11 @@ function buildPriceSearchQuery(prompt: string, currency: string): string {
   else if (condition === "likeNew") conditionQuery = "like new open box كسر زيرو";
   else if (condition === "used") conditionQuery = "used مستعمل";
 
-  return `${product} ${conditionQuery} price ${currency}`.trim().replace(/\s+/g, " ");
+  // IMPROVED: Exclude unreliable sources (classifieds, auctions, personal sellers)
+  // and focus on official retailers and trusted e-commerce platforms
+  const excludeTerms = "-olx -classified -facebook -marketplace -personal -seller -auction";
+  
+  return `${product} ${conditionQuery} price ${currency} ${excludeTerms}`.trim().replace(/\s+/g, " ");
 }
 
 // ---- Regional retry: domain restriction + localized query per currency ---

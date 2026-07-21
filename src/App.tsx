@@ -8,6 +8,7 @@ import { ProfileScreen } from "@/components/ProfileScreen";
 import { LoginScreen } from "@/components/LoginScreen";
 import { UpgradeScreen } from "@/components/UpgradeScreen";
 import { CompareScreen } from "@/components/CompareScreen";
+import { GuideScreen } from "@/components/GuideScreen";
 import { useApp } from "@/lib/AppContext";
 
 function ScreenRouter() {
@@ -27,6 +28,8 @@ function ScreenRouter() {
       return <UpgradeScreen />;
     case "compare":
       return <CompareScreen />;
+    case "guide":
+      return <GuideScreen />;
     default:
       return <DecisionInput />;
   }

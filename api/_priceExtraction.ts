@@ -234,7 +234,17 @@ function resultConflictsWithVariant(
   }
 
   const pageSuffix = detectVariantSuffix(headline);
+  
+  // CRITICAL FIX: "Pro" search must NOT match "Pro Max" listings.
+  // The original logic allowed "Pro" search to match "Pro Max" because "Pro Max" contains "Pro".
+  // We need to check if the page has a MORE SPECIFIC suffix than requested.
   if (pageSuffix !== null && pageSuffix !== constraints.requestedSuffix) {
+    // If we requested "Pro", and the page is "Pro Max", that's a mismatch.
+    if (constraints.requestedSuffix === "pro" && pageSuffix === "pro max") {
+      return `variant-mismatch (page is Pro Max, requested Pro)`;
+    }
+    
+    // General mismatch logic
     return constraints.requestedSuffix === null
       ? `variant-mismatch (page is about the "${pageSuffix}" trim, requested the base model)`
       : `variant-mismatch (page is about the "${pageSuffix}" trim, requested "${constraints.requestedSuffix}")`;
@@ -707,18 +717,59 @@ function removeOutliers(prices: WeightedPrice[]): OutlierResult {
   // rarely spans more than 6x low-to-high for the *same* SKU/variant), but
   // reliably catches leftover extraction noise.
   const med = median(expanded);
-  const MEDIAN_RATIO_FLOOR = 0.15;
-  const MEDIAN_RATIO_CEILING = 6;
+  // TIGHTENED GUARDS:
+  // For a specific model (e.g. iPhone 15 Pro), prices rarely vary by more than 2x
+  // unless there's a mix of storage capacities or conditions.
+  // 0.4x to 2.5x is a safer bound for 'same product' market prices.
+  const MEDIAN_RATIO_FLOOR = 0.4; 
+  const MEDIAN_RATIO_CEILING = 2.5;
   const lowerBound = Math.max(q1 - 1.5 * iqr, med * MEDIAN_RATIO_FLOOR);
   const upperBound = Math.min(q3 + 1.5 * iqr, med * MEDIAN_RATIO_CEILING);
 
-  const kept: WeightedPrice[] = [];
-  const removed: (WeightedPrice & { reason: string })[] = [];
+  // NEW: Price Density Check — identify the "cluster" of prices and reject outliers far from it
+  // This catches cases where one or two prices are wildly different (e.g., 100k when market is 50-60k)
+  const sortedPrices = [...prices].sort((a, b) => a.value - b.value);
+  const priceGaps: { gap: number; index: number }[] = [];
+  for (let i = 1; i < sortedPrices.length; i++) {
+    const gap = sortedPrices[i].value - sortedPrices[i - 1].value;
+    priceGaps.push({ gap, index: i });
+  }
+  
+  // Find the largest gap — if there's a big jump, prices on the far side are likely outliers
+  let largestGapIndex = -1;
+  let largestGap = 0;
+  for (const { gap, index } of priceGaps) {
+    if (gap > largestGap) {
+      largestGap = gap;
+      largestGapIndex = index;
+    }
+  }
+  
+  // If the largest gap is more than 50% of the median, it's a strong signal of a price cluster break
+  const densityThreshold = med * 0.5;
+  let priceClusterCutoff: number | null = null;
+  if (largestGapIndex > 0 && largestGap > densityThreshold) {
+    priceClusterCutoff = sortedPrices[largestGapIndex].value;
+  }
+
   for (const p of prices) {
-    if (p.value >= lowerBound && p.value <= upperBound) {
+    let shouldKeep = p.value >= lowerBound && p.value <= upperBound;
+    let rejectReason: string | null = null;
+    
+    // Apply density check: if price is on the far side of a large gap, reject it
+    if (shouldKeep && priceClusterCutoff !== null && p.value >= priceClusterCutoff) {
+      shouldKeep = false;
+      rejectReason = `outlier (beyond price cluster gap of ${largestGap.toFixed(2)}, cluster cutoff=${priceClusterCutoff.toFixed(2)})`;
+    }
+    
+    if (!rejectReason && !shouldKeep) {
+      rejectReason = `outlier (outside [${lowerBound.toFixed(2)}, ${upperBound.toFixed(2)}] IQR+median-ratio fence, median=${med.toFixed(2)})`;
+    }
+    
+    if (shouldKeep) {
       kept.push(p);
     } else {
-      removed.push({ ...p, reason: `outlier (outside [${lowerBound.toFixed(2)}, ${upperBound.toFixed(2)}] IQR+median-ratio fence, median=${med.toFixed(2)})` });
+      removed.push({ ...p, reason: rejectReason || "outlier" });
     }
   }
 
@@ -752,11 +803,22 @@ function buildRange(
   rate: number
 ): MarketPriceRange {
   const rawValues = kept.map((p) => p.value).sort((a, b) => a - b);
-  const min = Math.round(rawValues[0] * rate);
-  const max = Math.round(rawValues[rawValues.length - 1] * rate);
+  let min = Math.round(rawValues[0] * rate);
+  let max = Math.round(rawValues[rawValues.length - 1] * rate);
   const weightedExpanded = expandByWeight(kept);
   const mid = Math.round(median(weightedExpanded) * rate);
   const sampleValues = [...new Set(rawValues)].map((v) => Math.round(v * rate));
+
+  // FINAL SANITY GUARD:
+  // If the spread is still absurd (e.g. max > 3x min), or max is > 2x the user's offered price
+  // for a high-value item, we should probably trust the median more and tighten the range.
+  if (max > min * 3) {
+     // Tighten to a 1.5x spread around the median if the raw range is nonsense
+     const midVal = Math.round(median(weightedExpanded) * rate);
+     min = Math.max(min, Math.round(midVal * 0.7));
+     max = Math.min(max, Math.round(midVal * 1.3));
+  }
+
   return { min, mid, max, targetCurrency, sourceCurrency, rate, sampleSize: kept.length, sampleValues };
 }
 

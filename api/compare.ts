@@ -21,13 +21,20 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
   "rows": [
     { "category": {"ar":string,"en":string}, "valueA": {"ar":string,"en":string}, "valueB": {"ar":string,"en":string}, "winner": "A" | "B" | "tie" }
   ],
-  "finalRecommendation": { "ar": string, "en": string }
+  "finalRecommendation": { "ar": string, "en": string },
+  "resaleValueA": number,
+  "resaleValueB": number,
+  "resaleValueTimeframe": "1year",
+  "warrantyScoreA": number,
+  "warrantyScoreB": number
 }
 
 Rules:
-- Include at least 5 comparison rows covering: price value, build/quality, performance, future compatibility/longevity, and overall value for money.
+- Include at least 6 comparison rows covering: price value, build/quality, performance, future compatibility/longevity, resale value potential, warranty/service availability, and overall value for money.
 - "winner" must be based on real researched facts about these specific products, never random.
 - finalRecommendation must weigh both the researched facts and the two offered prices (${priceA} ${currency} vs ${priceB} ${currency}).
+- resaleValueA/B: Estimate what each product will be worth in 1 year (as a percentage of current price, e.g., 65 means 65% of current price). Base this on brand reputation and market demand.
+- warrantyScoreA/B: Rate warranty availability and service center accessibility on a scale of 1-10 (10 = excellent warranty + many service centers, 1 = no warranty + hard to find service).
 - Return ONLY the JSON object, nothing else.`;
 }
 
@@ -132,6 +139,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(502).json({ error: "comparison_invalid" });
     }
 
+    // Normalize resale values and warranty scores (with safe defaults)
+    const resaleValueA = typeof parsed.resaleValueA === "number" && parsed.resaleValueA > 0 ? Math.min(100, Math.max(0, parsed.resaleValueA)) : 50;
+    const resaleValueB = typeof parsed.resaleValueB === "number" && parsed.resaleValueB > 0 ? Math.min(100, Math.max(0, parsed.resaleValueB)) : 50;
+    const warrantyScoreA = typeof parsed.warrantyScoreA === "number" ? Math.min(10, Math.max(1, parsed.warrantyScoreA)) : 5;
+    const warrantyScoreB = typeof parsed.warrantyScoreB === "number" ? Math.min(10, Math.max(1, parsed.warrantyScoreB)) : 5;
+
     console.log("Saving database...");
     await logAiUsage(admin, {
       endpoint: "compare",
@@ -154,6 +167,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       currency: currency || "EGP",
       rows: parsed.rows,
       finalRecommendation: parsed.finalRecommendation,
+      resaleValueA,
+      resaleValueB,
+      resaleValueTimeframe: "1year",
+      warrantyScoreA,
+      warrantyScoreB,
       remaining: Math.max(0, COMPARE_MONTHLY_LIMIT - newComparesUsed),
       max: COMPARE_MONTHLY_LIMIT,
     };

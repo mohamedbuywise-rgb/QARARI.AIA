@@ -119,18 +119,41 @@ export function UpgradeScreen() {
                 <p className="text-sm text-zinc-300">{feature}</p>
               </div>
             ))}
+            {/* New Premium Features */}
+            <div className="border-t border-zinc-700 pt-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+                  <Check className="h-3 w-3 text-emerald-400" />
+                </span>
+                <p className="text-sm text-zinc-300">
+                  {lang === "ar" ? "💬 رسائل شات غير محدودة مع المساعد الشخصي" : "💬 Unlimited chat with personal advisor"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5 mt-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+                  <Check className="h-3 w-3 text-emerald-400" />
+                </span>
+                <p className="text-sm text-zinc-300">
+                  {lang === "ar" ? "🧠 ذاكرة ذكية تتذكر اهتماماتك" : "🧠 Smart memory for personalized advice"}
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Value reinforcement (animated) */}
           <div className="rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4">
             <p className="mb-3 flex items-center gap-1.5 text-sm font-medium text-zinc-300">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              {t("valueSectionTitle")}
+              {lang === "ar" ? "💰 القيمة الحقيقية" : "💰 Real Value"}
             </p>
-            <p className="text-center text-xs text-zinc-500">{t("valueMessage")}</p>
+            <p className="text-center text-xs text-zinc-500">
+              {lang === "ar" ? "قرار شراء واحد صحيح يوفر لك آلاف الجنيهات، والاشتراك بـ 150 جنيه فقط!" : "One right purchase decision saves you thousands, subscription is just 150 EGP!"}
+            </p>
             <div className="value-banner mt-3 flex items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
-              <span className="text-lg">🎉</span>
-              <p className="text-sm font-bold text-emerald-400">{t("valueBanner")}</p>
+              <span className="text-lg">✨</span>
+              <p className="text-sm font-bold text-emerald-400">
+                {lang === "ar" ? "استثمر 150 جنيه لتوفير آلاف!" : "Invest 150 EGP to save thousands!"}
+              </p>
             </div>
           </div>
 

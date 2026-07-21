@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useApp } from "@/lib/AppContext";
 import { getCategoryIcon } from "@/lib/categoryIcons";
 import { currencies } from "@/lib/types";
@@ -169,6 +169,41 @@ export function CompareScreen() {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Resale Value & Warranty Score */}
+        <div className="mb-6 grid grid-cols-2 gap-3">
+          {/* Resale Value */}
+          <div className="rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4">
+            <p className="mb-2 text-xs font-bold text-amber-400">📈 {lang === "ar" ? "سعر إعادة البيع" : "Resale Value"}</p>
+            <p className="text-xs text-zinc-400">{lang === "ar" ? "بعد سنة واحدة" : "After 1 year"}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-zinc-800/40 p-2 text-center">
+                <p className="text-xs text-zinc-300">{lang === "ar" ? "المنتج أ" : "Product A"}</p>
+                <p className="mt-1 text-sm font-bold text-amber-400">{currentCompare.resaleValueA || 50}%</p>
+              </div>
+              <div className="rounded-lg bg-zinc-800/40 p-2 text-center">
+                <p className="text-xs text-zinc-300">{lang === "ar" ? "المنتج ب" : "Product B"}</p>
+                <p className="mt-1 text-sm font-bold text-amber-400">{currentCompare.resaleValueB || 50}%</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Warranty & Service Score */}
+          <div className="rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4">
+            <p className="mb-2 text-xs font-bold text-amber-400">🛡️ {lang === "ar" ? "الضمان والصيانة" : "Warranty & Service"}</p>
+            <p className="text-xs text-zinc-400">{lang === "ar" ? "من 1 إلى 10" : "Scale 1-10"}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-zinc-800/40 p-2 text-center">
+                <p className="text-xs text-zinc-300">{lang === "ar" ? "المنتج أ" : "Product A"}</p>
+                <p className="mt-1 text-sm font-bold text-amber-400">{currentCompare.warrantyScoreA || 5}/10</p>
+              </div>
+              <div className="rounded-lg bg-zinc-800/40 p-2 text-center">
+                <p className="text-xs text-zinc-300">{lang === "ar" ? "المنتج ب" : "Product B"}</p>
+                <p className="mt-1 text-sm font-bold text-amber-400">{currentCompare.warrantyScoreB || 5}/10</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Final Recommendation */}
