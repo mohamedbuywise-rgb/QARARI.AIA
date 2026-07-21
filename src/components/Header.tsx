@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { Globe, History, User, Sparkles, Plus, GitCompare } from "lucide-react";
+import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle } from "lucide-react";
 
 export function Header() {
   const { lang, setLang, t, navigate, screen, isPremium, user } = useApp();
@@ -61,6 +62,15 @@ export function Header() {
             title={t("profile")}
           >
             <User className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => navigate("guide")}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+              screen === "guide" ? "bg-amber-500/15 text-amber-400" : "text-zinc-400 hover:bg-zinc-800/50 hover:text-amber-400"
+            }`}
+            title="How to use"
+          >
+            <HelpCircle className="h-5 w-5" />
           </button>
           <button
             onClick={() => setLang(lang === "ar" ? "en" : "ar")}
