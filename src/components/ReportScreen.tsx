@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
+import { FutureValueCard } from "@/components/FutureValueCard";
 import { useApp } from "@/lib/AppContext";
 import { supabase } from "@/lib/supabase";
 import { getCategoryIcon } from "@/lib/categoryIcons";
@@ -467,37 +468,19 @@ export function ReportScreen() {
             )}
           </div>
 
-          {/* Trade-in Calculator */}
-          {report.tradeInValue && (
-            <div className="mb-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-5">
-              <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-purple-400">
-                <RefreshCw className="h-5 w-5" /> {lang === "ar" ? "حاسبة الاستبدال (Trade-in)" : "Trade-in Calculator"}
-              </h2>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
-                  <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "قيمة جهازك الحالي" : "Your device trade-in value"}</p>
-                  <p className="text-lg font-bold text-purple-300">{fmtPrice(report.tradeInValue)} {cShort}</p>
-                </div>
-                <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
-                  <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "توفر" : "You save"}</p>
-                  <p className="text-lg font-bold text-emerald-400">{fmtPrice(report.tradeInValue)} {cShort}</p>
-                </div>
-              </div>
-              <p className="text-xs text-zinc-400 mb-3">
-                {lang === "ar"
-                  ? `لو عندك الجهاز ده دلوقتي، ممكن تاخد بيه ${fmtPrice(report.tradeInValue)} ${cShort} من أي مابدا الاستبدال`
-                  : `If you have this device now, you can get ${fmtPrice(report.tradeInValue)} ${cShort} from trade-in platforms`}
-              </p>
-              <div className="rounded-lg bg-purple-500/10 border border-purple-500/20 p-3">
-                <p className="text-xs text-purple-200">
-                  {lang === "ar"
-                    ? `💡 لو عندك جهاز حالي وتاخد معاياه، هتوفر ${fmtPrice(report.tradeInValue)} ${cShort} — يعني هتطلع بـ ${report.product} بسعر ${fmtPrice(report.offeredPrice - report.tradeInValue)} ${cShort} بدل ${fmtPrice(report.offeredPrice)} ${cShort}`
-                    : `💡 If you trade in your current device, you save ${fmtPrice(report.tradeInValue)} ${cShort} — meaning you get ${report.product} for only ${fmtPrice(report.offeredPrice - report.tradeInValue)} ${cShort} instead of ${fmtPrice(report.offeredPrice)} ${cShort}`}
-                </p>
-              </div>
-            </div>
-          )}
+
         </>
+      )}
+
+      {/* Future Value Card - Premium */}
+      {report.resaleValue2Years && (
+        <FutureValueCard
+          lang={lang}
+          offeredPrice={report.offeredPrice}
+          resaleValue2Years={report.resaleValue2Years}
+          resaleDepreciationRate={report.resaleDepreciationRate}
+          currencyShort={cShort}
+        />
       )}
 
       {/* Cons + Pros */}

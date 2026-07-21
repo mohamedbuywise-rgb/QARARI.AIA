@@ -334,30 +334,33 @@ export function InputScreen() {
             {!isPremium && <Crown className="ml-1 h-3 w-3" />}
           </Button>
 
-          {/* Shopping Advisor Mode - Personal Advisor */}
-          <div className="mt-4 rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/20 to-amber-600/20">
-                <Brain className="h-5 w-5 text-amber-400" />
+          {/* Smart Advisor Card - Premium */}
+          <div className="mt-6 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-600/5 to-transparent p-5 shadow-lg shadow-amber-500/5">
+            <div className="flex items-start gap-4">
+              <div className="relative">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-lg shadow-amber-500/20">
+                  <Brain className="h-6 w-6 text-black" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 shadow-lg" />
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-amber-400">
-                  {lang === "ar" ? "🤖 المساعد الشخصي الذكي" : "🤖 Smart Personal Advisor"}
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wide">
+                  {lang === "ar" ? "مستشار الشراء الذكي" : "Smart Shopping Advisor"}
                 </h3>
-                <p className="text-[11px] text-zinc-500">
+                <p className="text-xs text-zinc-400 mt-1">
                   {lang === "ar"
-                    ? "اسألني أي سؤال عن الشراء بدون ما تحتاج تحليل"
-                    : "Ask me anything about shopping without needing an analysis"}
+                    ? "اسألني أي سؤال عن الشراء أو المقارنة.. وموجود لمساعدتك في أي وقت دون تعقيد."
+                    : "Ask me anything about shopping or comparison.. I'm here to help anytime without complexity."}
                 </p>
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-zinc-800/50 px-3 py-2">
+                  <MessageCircle className="h-3.5 w-3.5 text-amber-400" />
+                  <span className="text-[10px] text-zinc-500 italic">
+                    {lang === "ar"
+                      ? "مثال: معايا 30 ألف وعايز لابتوب للدراسة..."
+                      : "Example: I have 30K EGP and need a laptop for studying..."}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-[11px] text-zinc-400 mb-3">
-              <MessageCircle className="h-3.5 w-3.5" />
-              <span>
-                {lang === "ar"
-                  ? "معايا 30 ألف وعايز لابتوب للدراسة..."
-                  : "I have 30K EGP and need a laptop for studying..."}
-              </span>
             </div>
             <Button
               onClick={() => {
@@ -372,36 +375,13 @@ export function InputScreen() {
                 }
                 navigate("advisor");
               }}
-              variant="outline"
-              className="w-full border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10 text-sm"
+              className="mt-4 w-full bg-gradient-to-r from-amber-400 to-amber-600 text-black font-bold hover:from-amber-300 hover:to-amber-500 shadow-lg shadow-amber-500/20"
             >
-              <MessageCircle className="h-4 w-4" /> {lang === "ar" ? "ابدأ الشات مع المساعد" : "Start chat with advisor"}
+              <MessageCircle className="h-4 w-4" /> {lang === "ar" ? "ابدأ المحادثة مع المستشار" : "Start conversation with advisor"}
             </Button>
           </div>
 
-          {/* Trade-in Calculator */}
-          <div className="mt-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/20">
-                <RefreshCw className="h-4 w-4 text-purple-400" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-purple-400">
-                  {lang === "ar" ? "حاسبة الاستبدال" : "Trade-in Calculator"}
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  {lang === "ar" ? "اعرف قيمة جهازك القديم قبل ما تشتري جديد" : "Know your old device value before buying new"}
-                </p>
-              </div>
-            </div>
-            <Button
-              onClick={() => navigate("tradein")}
-              variant="outline"
-              className="w-full border-purple-500/30 bg-purple-500/5 text-purple-400 hover:bg-purple-500/10 text-sm"
-            >
-              <RefreshCw className="h-4 w-4" /> {lang === "ar" ? "احسب قيمة جهازك الحالي" : "Calculate your device value"}
-            </Button>
-          </div>
+
 
           {/* Demo Report */}
           {history.length === 0 && (

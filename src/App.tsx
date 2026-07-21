@@ -10,7 +10,7 @@ import { UpgradeScreen } from "@/components/UpgradeScreen";
 import { CompareScreen } from "@/components/CompareScreen";
 import { GuideScreen } from "@/components/GuideScreen";
 import { AdvisorScreen } from "@/components/AdvisorScreen";
-import { TradeInScreen } from "@/components/TradeInScreen";
+
 import { useApp } from "@/lib/AppContext";
 
 function ScreenRouter() {
@@ -34,8 +34,7 @@ function ScreenRouter() {
       return <GuideScreen />;
     case "advisor":
       return <AdvisorScreen />;
-    case "tradein":
-      return <TradeInScreen />;
+
     default:
       return <DecisionInput />;
   }

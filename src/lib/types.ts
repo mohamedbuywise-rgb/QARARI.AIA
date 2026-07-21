@@ -1,6 +1,6 @@
 export type Language = "ar" | "en";
 export type Verdict = "good" | "fair" | "bad";
-export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare" | "guide" | "advisor" | "tradein";
+export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare" | "guide" | "advisor";
 
 export interface Currency {
   code: string;
