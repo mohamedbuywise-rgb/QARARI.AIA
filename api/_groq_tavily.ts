@@ -1,12 +1,20 @@
 import { logStep, logEnvPresence, loggedFetch, loggedJsonParse } from "./_logger.js";
 import { computeMarketPriceRange, formatMarketPriceContext, isSupportedCurrency } from "./_priceExtraction.js";
 
-// Shared Groq + Tavily calling logic, replacing Gemini + built-in search
-// grounding. Two-stage pipeline per call:
-//   1. Tavily runs a live web search for the product (real pricing/pros/cons
-//      data) — this replaces Gemini's `google_search` grounding tool.
-//   2. Groq (OpenAI-compatible chat-completions API) ingests the raw Tavily
-//      results as context and returns the structured JSON analysis.
+// Shared Groq + Tavily + Serper calling logic, replacing Gemini + built-in
+// search grounding. Three-way split per call:
+//   1. Tavily runs a live web search for the product (specs/pros/cons/
+//      review context) — this replaces Gemini's `google_search` grounding
+//      tool.
+//   2. Serper (Google SERP API) runs a separate, price-only search for
+//      whichever product has a target currency in the prompt — this is the
+//      live price source that feeds computeMarketPriceRange() in
+//      _priceExtraction.ts. If Serper is unavailable (missing key, outage),
+//      price extraction falls back to mining the Tavily results instead, so
+//      pricing keeps working either way.
+//   3. Groq (OpenAI-compatible chat-completions API) ingests the Tavily
+//      specs context + the Serper-derived price range as context and
+//      returns the structured JSON analysis.
 //
 // 2026-07-19 note: the models originally requested — llama3-70b-8192 and
 // llama-3.1-70b-versatile / llama-3.3-70b-versatile — are ALL deprecated on
@@ -120,6 +128,116 @@ async function searchTavily(
   return { results, answer: json?.answer || null };
 }
 
+// ---- Alternative provider: Serper.dev (Google Search API) ----------------
+// Drop-in alternative to searchTavily() above — same input shape, same
+// return shape ({ results: TavilyResult[]; answer: string | null }) — so it
+// can be swapped in for searchTavily() at the call sites in
+// callAiWithFallback() with a one-line change, whenever that switch is
+// wanted. NOT wired into the pipeline yet: nothing below calls this
+// function, and _priceExtraction.ts / the rest of the pipeline only ever
+// consumes the TavilyResult[] shape, not which provider produced it, so
+// nothing else needs to change when it is wired in.
+//
+// Serper.dev has no native "raw_content" (full page scrape) or "answer"
+// (AI-generated summary) concept the way Tavily does — it's a Google SERP
+// API. This maps what it does return onto the same shape:
+//   - content  -> Serper's `snippet` (the Google result snippet)
+//   - rawContent -> always null (Serper doesn't fetch/scrape the page)
+//   - answer   -> Serper's `answerBox.answer` / `answerBox.snippet` if
+//                 Google shows a featured answer box for the query, else null
+// Because rawContent is always null here, computeMarketPriceRange() in
+// _priceExtraction.ts will have less text to scan per result than it does
+// with Tavily (which does include a raw scrape). That's a real quality
+// tradeoff to know about before switching providers, not a bug in this
+// function.
+async function searchSerper(
+  query: string,
+  opts: { includeDomains?: string[]; gl?: string; hl?: string } = {}
+): Promise<{ results: TavilyResult[]; answer: string | null }> {
+  console.log("Calling Serper...");
+  console.log("[Serper] Query:", query);
+  if (opts.includeDomains?.length) {
+    console.log("[Serper] Domain restriction:", opts.includeDomains.join(", "));
+  }
+  if (opts.gl || opts.hl) {
+    console.log("[Serper] Region override — gl:", opts.gl || "(account default)", "hl:", opts.hl || "(account default)");
+  }
+
+  const apiKey = process.env.SERPER_API_KEY;
+  logEnvPresence({ SERPER_API_KEY: apiKey });
+  if (!apiKey) {
+    console.error("[Serper] Missing SERPER_API_KEY env var");
+    throw new Error("Missing SERPER_API_KEY env var");
+  }
+
+  // Serper has no include_domains param — fold domain restriction into the
+  // query itself using Google's own "(site:a OR site:b)" syntax instead,
+  // same effect as Tavily's include_domains.
+  const q = opts.includeDomains?.length
+    ? `${query} (${opts.includeDomains.map((d) => `site:${d}`).join(" OR ")})`
+    : query;
+
+  let res: Response;
+  try {
+    res = await loggedFetch("serper.search", "https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Serper's auth header is X-API-KEY, not Bearer.
+        "X-API-KEY": apiKey,
+      },
+      body: JSON.stringify({
+        q,
+        num: 10,
+        // gl/hl (Google country/language) are OMITTED when not explicitly
+        // passed in, so the call falls back to whatever default is set in
+        // the Serper.dev dashboard (e.g. Egypt / Arabic). They're only set
+        // here explicitly for currencies whose regional hint below points
+        // somewhere else (US, UK, EU, ...) — that override matters because
+        // the dashboard default applies to EVERY call otherwise, including
+        // ones searching for a non-Egyptian price in English, where an
+        // Egypt-biased gl can skew Google's ranking away from the
+        // US/UK/EU retailers the query is actually trying to reach.
+        ...(opts.gl ? { gl: opts.gl } : {}),
+        ...(opts.hl ? { hl: opts.hl } : {}),
+      }),
+    });
+  } catch (error: any) {
+    console.error("SERPER ERROR");
+    console.error(error);
+    console.error(error?.stack);
+    throw error;
+  }
+
+  console.log("Status:", res.status);
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("[Serper] Non-OK response body:", errText);
+    throw new Error(`Serper search error ${res.status}: ${errText}`);
+  }
+
+  const bodyText = await res.text();
+  console.log("Body:", bodyText.slice(0, 2000));
+
+  const json = loggedJsonParse("serper.search", bodyText);
+  const organic = Array.isArray(json?.organic) ? json.organic : [];
+  const results: TavilyResult[] = organic.map((r: any) => ({
+    title: r.title || "",
+    url: r.link || "",
+    content: r.snippet || "",
+    rawContent: null, // Serper doesn't provide a full-page scrape
+  }));
+
+  const answer: string | null =
+    json?.answerBox?.answer || json?.answerBox?.snippet || null;
+
+  console.log("[Serper] Results count:", results.length);
+  console.log("Calling Serper... done");
+
+  return { results, answer };
+}
+
 // Pulls a clean search query out of the analyst prompt instead of sending
 // the whole multi-hundred-word prompt to Tavily. Handles both the single-
 // product shape from analyze.ts/ask.ts ("PRODUCT: ...") and the two-product
@@ -147,6 +265,16 @@ function extractTargetCurrency(prompt: string): string | null {
   return isSupportedCurrency(code) ? code : null;
 }
 
+// Builds a price-only query for Serper. Kept deliberately separate from
+// buildSearchQuery() above (which is tuned for Tavily's specs/pros/cons
+// research and includes "review" in the query) — Serper's one job in this
+// pipeline is finding the current live price, so the query stays narrow.
+function buildPriceSearchQuery(prompt: string, currency: string): string {
+  const single = prompt.match(/PRODUCT:\s*(.+)/i);
+  const product = single ? single[1].trim() : prompt.slice(0, 200);
+  return `${product} price ${currency}`;
+}
+
 // ---- Regional retry: domain restriction + localized query per currency ---
 // The generic English query ("iPhone 15 Pro Max current market price...")
 // tends to surface global/US-centric pages, which either have no price in
@@ -163,6 +291,8 @@ interface CurrencyRegionHint {
   countryQueryHint: string; // appended to the query so Tavily biases toward this market
   domains: string[]; // passed as Tavily's include_domains on retry
   arabicPriceWord: string | null; // non-null => also try an Arabic-language query form
+  gl: string; // Google/Serper country code for this currency's market
+  hl: string; // Google/Serper language code for this currency's market
 }
 
 const CURRENCY_REGION_HINTS: Partial<Record<string, CurrencyRegionHint>> = {
@@ -178,39 +308,88 @@ const CURRENCY_REGION_HINTS: Partial<Record<string, CurrencyRegionHint>> = {
       "raya.com",
     ],
     arabicPriceWord: "سعر في مصر بالجنيه المصري",
+    gl: "eg",
+    hl: "ar",
   },
   SAR: {
     countryQueryHint: "Saudi Arabia",
     domains: ["noon.com", "amazon.sa", "jarir.com", "extra.com"],
     arabicPriceWord: "سعر في السعودية بالريال السعودي",
+    gl: "sa",
+    hl: "ar",
   },
   AED: {
     countryQueryHint: "UAE",
     domains: ["noon.com", "amazon.ae", "sharafdg.com"],
     arabicPriceWord: "سعر في الإمارات بالدرهم",
+    gl: "ae",
+    hl: "ar",
   },
   KWD: {
     countryQueryHint: "Kuwait",
     domains: ["noon.com", "xcite.com"],
     arabicPriceWord: "سعر في الكويت بالدينار الكويتي",
+    gl: "kw",
+    hl: "ar",
   },
   QAR: {
     countryQueryHint: "Qatar",
     domains: ["noon.com"],
     arabicPriceWord: "سعر في قطر بالريال القطري",
+    gl: "qa",
+    hl: "ar",
   },
-  BHD: { countryQueryHint: "Bahrain", domains: ["noon.com"], arabicPriceWord: "سعر في البحرين بالدينار البحريني" },
-  OMR: { countryQueryHint: "Oman", domains: ["noon.com"], arabicPriceWord: "سعر في عمان بالريال العماني" },
-  JOD: { countryQueryHint: "Jordan", domains: ["noon.com"], arabicPriceWord: "سعر في الأردن بالدينار الأردني" },
-  USD: { countryQueryHint: "USA", domains: ["amazon.com", "bestbuy.com", "bhphotovideo.com", "apple.com"], arabicPriceWord: null },
-  GBP: { countryQueryHint: "UK", domains: ["amazon.co.uk", "currys.co.uk", "argos.co.uk"], arabicPriceWord: null },
-  EUR: { countryQueryHint: "Europe", domains: ["amazon.de", "amazon.fr", "mediamarkt.de"], arabicPriceWord: null },
+  BHD: {
+    countryQueryHint: "Bahrain",
+    domains: ["noon.com"],
+    arabicPriceWord: "سعر في البحرين بالدينار البحريني",
+    gl: "bh",
+    hl: "ar",
+  },
+  OMR: {
+    countryQueryHint: "Oman",
+    domains: ["noon.com"],
+    arabicPriceWord: "سعر في عمان بالريال العماني",
+    gl: "om",
+    hl: "ar",
+  },
+  JOD: {
+    countryQueryHint: "Jordan",
+    domains: ["noon.com"],
+    arabicPriceWord: "سعر في الأردن بالدينار الأردني",
+    gl: "jo",
+    hl: "ar",
+  },
+  USD: {
+    countryQueryHint: "USA",
+    domains: ["amazon.com", "bestbuy.com", "bhphotovideo.com", "apple.com"],
+    arabicPriceWord: null,
+    gl: "us",
+    hl: "en",
+  },
+  GBP: {
+    countryQueryHint: "UK",
+    domains: ["amazon.co.uk", "currys.co.uk", "argos.co.uk"],
+    arabicPriceWord: null,
+    gl: "gb",
+    hl: "en",
+  },
+  EUR: {
+    countryQueryHint: "Europe",
+    domains: ["amazon.de", "amazon.fr", "mediamarkt.de"],
+    arabicPriceWord: null,
+    gl: "de",
+    hl: "en",
+  },
 };
 
 // Builds the retry query + domain list for a given prompt/currency. Reuses
 // the same product-name parsing as buildSearchQuery so both queries are
 // anchored to the same product.
-function buildLocalizedRetryQuery(prompt: string, currency: string): { query: string; domains: string[] } | null {
+function buildLocalizedRetryQuery(
+  prompt: string,
+  currency: string
+): { query: string; domains: string[]; gl: string; hl: string } | null {
   const hint = CURRENCY_REGION_HINTS[currency];
   if (!hint) return null;
   const single = prompt.match(/PRODUCT:\s*(.+)/i);
@@ -218,7 +397,7 @@ function buildLocalizedRetryQuery(prompt: string, currency: string): { query: st
   const query = hint.arabicPriceWord
     ? `${product} ${hint.arabicPriceWord}`
     : `${product} price ${hint.countryQueryHint} ${currency}`;
-  return { query, domains: hint.domains };
+  return { query, domains: hint.domains, gl: hint.gl, hl: hint.hl };
 }
 
 function formatSearchContext(results: TavilyResult[], answer: string | null): string {
@@ -359,17 +538,48 @@ export async function callAiWithFallback(
       const targetCurrency = extractTargetCurrency(prompt);
       if (targetCurrency) {
         try {
-          let priceRange = await computeMarketPriceRange(results, targetCurrency, prompt);
-          let resultsForContext = results;
+          // Live price now comes from Serper (a live Google SERP call) as
+          // the primary source instead of re-mining the Tavily specs/review
+          // results above — Serper reflects current listings more directly
+          // for pricing specifically. Tavily's `results` (fetched above)
+          // stay untouched as the source for searchContext (specs/pros/
+          // cons); this block ONLY affects price extraction and never
+          // reassigns searchContext.
+          let priceRange: any = null;
+          try {
+            const priceQuery = buildPriceSearchQuery(prompt, targetCurrency);
+            const regionHint = CURRENCY_REGION_HINTS[targetCurrency];
+            const { results: serperResults } = await searchSerper(priceQuery, {
+              gl: regionHint?.gl,
+              hl: regionHint?.hl,
+            });
+            searchQueryCount += 1; // billed Serper call
+            priceRange = await computeMarketPriceRange(serperResults, targetCurrency, prompt);
+            console.log(
+              priceRange
+                ? "[GroqTavily] Serper price search found a usable price."
+                : "[GroqTavily] Serper price search found nothing usable on first pass."
+            );
+          } catch (serperErr: any) {
+            // Missing SERPER_API_KEY, Serper outage, rate limit, etc. —
+            // fall back to the original behavior (price-mine the Tavily
+            // results already fetched above) so pricing keeps working even
+            // if Serper is unavailable for this request.
+            console.error("[GroqTavily] Serper price search failed — falling back to Tavily results for pricing:");
+            console.error(serperErr);
+            console.error(serperErr?.stack);
+            priceRange = await computeMarketPriceRange(results, targetCurrency, prompt);
+          }
 
-          // Retry: the generic query above is English and untargeted, so
-          // it often surfaces global pages with no price in the user's
-          // currency (or noisy pages the extractor can't trust). If that
-          // happened, spend ONE extra Tavily call on a query aimed
-          // specifically at that currency's regional retailers (and, for
-          // Arabic-speaking markets, an Arabic-language query) before
-          // giving up. This only fires when the first attempt failed, so
-          // the common/successful case still costs exactly one Tavily call.
+          // Retry: the generic query above is untargeted, so it often
+          // surfaces global listings with no price in the user's currency
+          // (or noisy pages the extractor can't trust). If that happened,
+          // spend ONE extra call — Serper first, Tavily as a fallback if
+          // Serper itself is down — on a query aimed specifically at that
+          // currency's regional retailers (and, for Arabic-speaking
+          // markets, an Arabic-language query) before giving up. This only
+          // fires when the first attempt found nothing, so the common/
+          // successful case still costs exactly one extra call.
           if (!priceRange) {
             const retry = buildLocalizedRetryQuery(prompt, targetCurrency);
             if (retry) {
@@ -377,30 +587,34 @@ export async function callAiWithFallback(
                 `[GroqTavily] First-pass price extraction found nothing usable — retrying with localized query: "${retry.query}"`
               );
               try {
-                const { results: retryResults } = await searchTavily(retry.query, { includeDomains: retry.domains });
-                searchQueryCount += 1; // second billed Tavily call
-
-                // Merge, deduping by URL, so the model's context also
-                // benefits from whatever the localized pass turned up.
-                const seenUrls = new Set(results.map((r) => r.url));
-                const merged = [...results, ...retryResults.filter((r) => !seenUrls.has(r.url))];
-                resultsForContext = merged;
-
-                priceRange = await computeMarketPriceRange(merged, targetCurrency, prompt);
+                try {
+                  const { results: retryResults } = await searchSerper(retry.query, {
+                    includeDomains: retry.domains,
+                    gl: retry.gl,
+                    hl: retry.hl,
+                  });
+                  searchQueryCount += 1; // billed Serper call
+                  priceRange = await computeMarketPriceRange(retryResults, targetCurrency, prompt);
+                } catch (retrySerperErr: any) {
+                  console.error("[GroqTavily] Localized Serper retry failed — falling back to Tavily for the retry:");
+                  console.error(retrySerperErr);
+                  const { results: retryResults } = await searchTavily(retry.query, { includeDomains: retry.domains });
+                  searchQueryCount += 1; // billed Tavily call
+                  priceRange = await computeMarketPriceRange(retryResults, targetCurrency, prompt);
+                }
                 console.log(
                   priceRange
                     ? "[GroqTavily] Localized retry found a usable price."
                     : "[GroqTavily] Localized retry still found nothing usable — leaving pricing to the model."
                 );
               } catch (retryErr: any) {
-                console.error("[GroqTavily] Localized retry Tavily call failed:");
+                console.error("[GroqTavily] Localized retry call failed:");
                 console.error(retryErr);
                 console.error(retryErr?.stack);
               }
             }
           }
 
-          searchContext = formatSearchContext(resultsForContext, answer);
           if (priceRange) {
             console.log(
               `[GroqTavily] Price extraction: found ${priceRange.sampleSize} price(s) in ${priceRange.sourceCurrency}` +
