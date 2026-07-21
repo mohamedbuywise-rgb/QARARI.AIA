@@ -105,8 +105,8 @@ export function GuideScreen() {
         <div className="space-y-2.5">
           {[
             {
-              ar: "✅ 50 تحليل شهري (بدل 10 في المجاني)",
-              en: "✅ 50 analyses per month (vs 10 free)",
+              ar: "✅ 50 تحليل شهري (بدل 5 في المجاني)",
+              en: "✅ 50 analyses per month (vs 5 free)",
             },
             {
               ar: "✅ 10 مقارنات شهرية (ميزة بريميوم فقط)",
@@ -119,10 +119,6 @@ export function GuideScreen() {
             {
               ar: "✅ ذاكرة ذكية تتذكر اهتماماتك وتقدم نصائح مخصصة",
               en: "✅ Smart memory that remembers your interests",
-            },
-            {
-              ar: "✅ 300 رسالة شات شهرية للمساعد (بدل 300 للمجاني)",
-              en: "✅ Unlimited advisor messages (vs 300 free)",
             },
           ].map((item, i) => (
             <p key={i} className="text-sm text-zinc-300">

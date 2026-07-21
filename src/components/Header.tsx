@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle } from "lucide-react";
+import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle, Bot } from "lucide-react";
 
 export function Header() {
   const { lang, setLang, t, navigate, screen, isPremium, user } = useApp();
@@ -62,6 +62,21 @@ export function Header() {
             title={t("profile")}
           >
             <User className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => {
+              if (!user) {
+                navigate("login");
+              } else {
+                navigate("advisor");
+              }
+            }}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+              screen === "advisor" ? "bg-amber-500/15 text-amber-400" : "text-zinc-400 hover:bg-zinc-800/50 hover:text-amber-400"
+            }`}
+            title={lang === "ar" ? "المساعد الشخصي" : "Personal Advisor"}
+          >
+            <Bot className="h-5 w-5" />
           </button>
           <button
             onClick={() => navigate("guide")}

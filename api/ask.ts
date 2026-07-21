@@ -49,6 +49,11 @@ function buildAdvisorPrompt(opts: {
 4. Proactively warning about common pitfalls
 5. Remembering their past interests
 
+IMPORTANT: Always be proactive. After answering the user's question, proactively add one helpful suggestion at the end using these patterns:
+- If they ask about a specific model: "الموديل اللي بتسأل عليه ده نزل منه نسخة أحدث، تحب أقارنلك؟" or "This model has a newer version available, want me to compare?"
+- If they mention a price: "في نفس النطاق ده فيه خيارات تانية ممكن تكون أفضل، تحب أقولك؟"
+- If they compare products: mention pros/cons and battery life or common issues proactively
+
 ${interestContext}
 
 CONVERSATION HISTORY:
@@ -56,7 +61,7 @@ ${historyBlock || "(New conversation)"}
 
 USER'S QUESTION: ${question}
 
-${languageInstruction} Be conversational, warm, and helpful. Keep answers to 3-5 sentences. If you suggest products, mention realistic price ranges.`;
+${languageInstruction} Be conversational, warm, and helpful. Keep answers to 3-5 sentences. If you suggest products, mention realistic price ranges. Always end with a helpful proactive tip or suggestion.`;
 }
 
 function buildChatPrompt(opts: {
@@ -305,6 +310,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages_used: newUsed,
         reset_at: new Date().toISOString(),
       });
+
+      // Smart Memory System: update user interests after each advisor interaction
+      if (user) {
+        try {
+          // Extract product mentions from the user's question for smart memory
+          const questionLower = question.toLowerCase();
+          const productKeywords = [
+            "موبايل", "iphone", "samsung", "xiaomi", "هاتف", "mobile", "phone",
+            "لابتوب", "laptop", "كمبيوتر", "computer", "macbook",
+            "سماعات", "headphone", "airpods", "earbuds",
+            "تلفزيون", "tv", "شاشة", "monitor",
+            "كاميرا", "camera",
+            "ساعة", "watch", "apple watch",
+            "تابلت", "tablet", "ipad",
+            "جهاز", "device",
+          ];
+          const detectedCategories = productKeywords.filter((kw) =>
+            questionLower.includes(kw)
+          );
+
+          if (detectedCategories.length > 0) {
+            const { data: existingInterests } = await admin
+              .from("user_interests")
+              .select("categories, recent_searches")
+              .eq("user_id", user.id)
+              .single();
+
+            if (existingInterests) {
+              // Merge new categories with existing ones
+              const existingCats = existingInterests.categories || [];
+              const newCats = [...new Set([...existingCats, ...detectedCategories])];
+
+              // Add to recent searches
+              const existingSearches = existingInterests.recent_searches || [];
+              const newSearches = [question.slice(0, 100), ...existingSearches].slice(0, 20);
+
+              await admin
+                .from("user_interests")
+                .update({
+                  categories: newCats,
+                  recent_searches: newSearches,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("user_id", user.id);
+            } else {
+              // Create new interests record
+              await admin.from("user_interests").upsert({
+                user_id: user.id,
+                categories: detectedCategories,
+                recent_searches: [question.slice(0, 100)],
+                favorite_products: [],
+                updated_at: new Date().toISOString(),
+              });
+            }
+          }
+        } catch (memoryErr) {
+          console.warn("[advisor] Smart memory update failed (non-critical):", memoryErr);
+        }
+      }
     } else {
       await admin.from("chat_usage").upsert({
         report_id: reportId,

@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sparkles, Camera, Upload, X, Crown, GitCompare } from "lucide-react";
+import { Sparkles, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
 
 export function InputScreen() {
   const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory } = useApp();
@@ -334,11 +334,80 @@ export function InputScreen() {
             {!isPremium && <Crown className="ml-1 h-3 w-3" />}
           </Button>
 
+          {/* Shopping Advisor Mode - Personal Advisor */}
+          <div className="mt-4 rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/5 to-transparent p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/20 to-amber-600/20">
+                <Brain className="h-5 w-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-400">
+                  {lang === "ar" ? "🤖 المساعد الشخصي الذكي" : "🤖 Smart Personal Advisor"}
+                </h3>
+                <p className="text-[11px] text-zinc-500">
+                  {lang === "ar"
+                    ? "اسألني أي سؤال عن الشراء بدون ما تحتاج تحليل"
+                    : "Ask me anything about shopping without needing an analysis"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400 mb-3">
+              <MessageCircle className="h-3.5 w-3.5" />
+              <span>
+                {lang === "ar"
+                  ? "معايا 30 ألف وعايز لابتوب للدراسة..."
+                  : "I have 30K EGP and need a laptop for studying..."}
+              </span>
+            </div>
+            <Button
+              onClick={() => {
+                if (!session?.user) {
+                  showToast(
+                    lang === "ar"
+                      ? "عشان أقدر أفتكر اهتماماتك وأقدملك نصائح مخصصة ليك، ياريت تسجل دخولك"
+                      : "To remember your interests and provide personalized advice, please sign in"
+                  );
+                  navigate("login");
+                  return;
+                }
+                navigate("advisor");
+              }}
+              variant="outline"
+              className="w-full border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10 text-sm"
+            >
+              <MessageCircle className="h-4 w-4" /> {lang === "ar" ? "ابدأ الشات مع المساعد" : "Start chat with advisor"}
+            </Button>
+          </div>
+
+          {/* Trade-in Calculator */}
+          <div className="mt-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/20">
+                <RefreshCw className="h-4 w-4 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-purple-400">
+                  {lang === "ar" ? "حاسبة الاستبدال" : "Trade-in Calculator"}
+                </h3>
+                <p className="text-[11px] text-zinc-500">
+                  {lang === "ar" ? "اعرف قيمة جهازك القديم قبل ما تشتري جديد" : "Know your old device value before buying new"}
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={() => navigate("tradein")}
+              variant="outline"
+              className="w-full border-purple-500/30 bg-purple-500/5 text-purple-400 hover:bg-purple-500/10 text-sm"
+            >
+              <RefreshCw className="h-4 w-4" /> {lang === "ar" ? "احسب قيمة جهازك الحالي" : "Calculate your device value"}
+            </Button>
+          </div>
+
           {/* Demo Report */}
           {history.length === 0 && (
             <button
               onClick={handleDemo}
-              className="w-full text-center text-xs text-zinc-500 underline hover:text-amber-400"
+              className="w-full text-center text-xs text-zinc-500 underline hover:text-amber-400 mt-3"
             >
               {lang === "ar" ? "شوف مثال لتحليل توضيحي" : "See an example analysis"}
             </button>

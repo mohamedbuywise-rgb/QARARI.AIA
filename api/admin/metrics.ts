@@ -3,7 +3,7 @@ import { isValidAdmin } from "./_auth.js";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "../_logger.js";
 
-const MONTHLY_PRICE = 149;
+const MONTHLY_PRICE = 150;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const start = Date.now();

@@ -159,6 +159,15 @@ export function generateAnalysis(product: string, offeredPrice: number, currency
       ar: `مرحباً، أنا مهتم بـ ${product} بسعر ${offeredPrice.toLocaleString()} ${currency}. بحثت ووجدت أن السعر العادل في السوق ${marketFairPriceMin.toLocaleString()}-${marketFairPriceMax.toLocaleString()} ${currency}. هل يمكننا الوصول لسعر أفضل؟`,
       en: `Hello, I'm interested in ${product} at ${offeredPrice.toLocaleString()} ${currency}. I've researched and found the fair market price is ${marketFairPriceMin.toLocaleString()}-${marketFairPriceMax.toLocaleString()} ${currency}. Can we reach a better price?`,
     },
+    resaleValueRightNow: Math.round(offeredPrice * 0.85),
+    resaleValue1Year: Math.round(offeredPrice * 0.65),
+    resaleValue2Years: Math.round(offeredPrice * 0.45),
+    resaleDepreciationRate: "20-25% per year",
+    resaleInsight: {
+      ar: `هذا المنتج بيحتفظ بقيمة جيدة في السوق. بعد سنة ممكن تبيعه بـ ${Math.round(offeredPrice * 0.65).toLocaleString()} ${currency}، وبعدين بسنتين بـ ${Math.round(offeredPrice * 0.45).toLocaleString()} ${currency}.`,
+      en: `This product retains good value in the market. After 1 year you can sell it for ~${Math.round(offeredPrice * 0.65).toLocaleString()} ${currency}, and after 2 years ~${Math.round(offeredPrice * 0.45).toLocaleString()} ${currency}.`,
+    },
+    tradeInValue: Math.round(offeredPrice * 0.72),
     createdAt: Date.now(),
   };
 }
@@ -269,6 +278,15 @@ export function getDemoReport(): AnalysisResult {
       ar: "نصيحة: انتظر عروض الجمعة البيضاء أو قارن بين 3 متاجر على الأقل.",
       en: "Tip: Wait for Black Friday deals or compare at least 3 stores.",
     },
+    resaleValueRightNow: 44000,
+    resaleValue1Year: 33000,
+    resaleValue2Years: 23000,
+    resaleDepreciationRate: "25% per year",
+    resaleInsight: {
+      ar: "آبل بتحتفظ بقيمة عالية جداً في السوق. بعد سنة ممكن تبيعه بـ 33,000 جنيه، وبعدين بسنتين بـ 23,000 جنيه. يعني التكلفة الفعلية بعد سنتين 27,000 جنيه.",
+      en: "Apple retains value very well in the market. After 1 year you can sell for ~33,000 EGP, and after 2 years ~23,000 EGP. Your actual cost after 2 years is 27,000 EGP.",
+    },
+    tradeInValue: 37000,
     betterAlternatives: [
       {
         name: "Samsung Galaxy S24 Ultra",

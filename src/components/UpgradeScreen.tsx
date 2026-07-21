@@ -105,7 +105,7 @@ export function UpgradeScreen() {
           {/* Plan (monthly only) */}
           <div className="rounded-xl border-2 border-amber-500 bg-amber-500/10 p-4 text-center">
             <p className="text-sm font-medium text-zinc-300">{t("monthly")}</p>
-            <p className="mt-1 text-2xl font-bold text-amber-400">149 EGP</p>
+            <p className="mt-1 text-2xl font-bold text-amber-400">150 EGP</p>
             <p className="text-xs text-zinc-500">{t("perMonth")}</p>
           </div>
 

@@ -7,10 +7,10 @@ import type { Verdict } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Search, Info, TrendingUp, AlertTriangle, Check, X, Compass,
+  Search, Info, TrendingUp, TrendingDown, AlertTriangle, Check, X, Compass,
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
-  Sparkles, GitCompare, Crown, Users,
+  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign,
 } from "lucide-react";
 
 export function ReportScreen() {
@@ -273,25 +273,53 @@ export function ReportScreen() {
         )}
       </div>
 
-      {/* Community Radar — only renders with REAL data (never a fabricated count) */}
+      {/* Community Radar — REAL data with enhanced social proof */}
       {report.communityInsights && report.communityInsights.analyzedCount >= 3 && (
         <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
           <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-emerald-400">
             <Users className="h-5 w-5" /> {t("communityInsightsTitle")}
           </h2>
-          <p className="text-sm text-zinc-300">
-            <span className="font-bold text-emerald-400">{fmtPrice(report.communityInsights.analyzedCount)}</span>{" "}
-            {t("communityAnalyzedCount")}
-          </p>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
+              <p className="text-2xl font-bold text-emerald-400">{report.communityInsights.analyzedCount}</p>
+              <p className="text-xs text-zinc-400">{lang === "ar" ? "شخص حلّل المنتج ده" : "people analyzed this product"}</p>
+            </div>
+            <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
+              <p className="text-2xl font-bold text-amber-400">
+                {report.communityInsights.recentPrices?.length
+                  ? Math.round((report.communityInsights.recentPrices.reduce((a, b) => a + b, 0) / report.communityInsights.recentPrices.length) / report.offeredPrice * 100)
+                  : naLabel}
+                %
+              </p>
+              <p className="text-xs text-zinc-400">{lang === "ar" ? "سعر منتجك من متوسط السوق" : "Your price vs market avg"}</p>
+            </div>
+          </div>
           {(report.communityInsights.recentPrices ?? []).length > 1 && (
-            <div className="mt-3 border-t border-emerald-500/15 pt-3">
+            <div className="border-t border-emerald-500/15 pt-3">
               <p className="mb-2 text-xs text-zinc-500">{t("communityRecentPrices")}</p>
               <div className="flex flex-wrap gap-2">
                 {(report.communityInsights.recentPrices ?? []).map((p, i) => (
-                  <span key={i} className="rounded-lg bg-zinc-800/60 px-2.5 py-1 text-sm text-zinc-200">
+                  <span
+                    key={i}
+                    className={`rounded-lg px-2.5 py-1 text-sm ${
+                      p === report.offeredPrice
+                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30"
+                        : p < report.offeredPrice
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : "bg-red-500/10 text-red-400"
+                    }`}
+                  >
                     {fmtPrice(p)} {cShort}
+                    {p === report.offeredPrice && (lang === "ar" ? " (سعر انت)" : " (your price)")}
                   </span>
                 ))}
+              </div>
+              <div className="mt-3 rounded-lg bg-zinc-800/30 p-2.5">
+                <p className="text-xs text-zinc-400">
+                  {lang === "ar"
+                    ? `📊 ${report.communityInsights.recentPrices!.filter((p) => p <= report.offeredPrice).length} من ${report.communityInsights.recentPrices!.length} شخص دفعوا نفس السعر أو أقل`
+                    : `📊 ${report.communityInsights.recentPrices!.filter((p) => p <= report.offeredPrice).length} out of ${report.communityInsights.recentPrices!.length} paid the same or less`}
+                </p>
               </div>
             </div>
           )}
@@ -350,6 +378,127 @@ export function ReportScreen() {
           <p className="mt-2 text-sm text-zinc-300">{bilingual(report.regretJustification)}</p>
         </div>
       </div>
+
+      {/* Resale Value Prediction + Trade-in Calculator */}
+      {(report.resaleValueRightNow || report.resaleValue1Year || report.tradeInValue) && (
+        <>
+          <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+            <h2 className="mb-4 flex items-center gap-2 font-serif text-lg font-bold text-cyan-400">
+              <TrendingDown className="h-5 w-5" /> {lang === "ar" ? "قيمة المنتج بعد سنة" : "Resale Value Prediction"}
+            </h2>
+
+            {/* Current price vs resale value timeline */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "القيمة دلوقتي" : "Now"}</p>
+                <p className="text-sm font-bold text-cyan-300">
+                  {report.resaleValueRightNow ? `${fmtPrice(report.resaleValueRightNow)} ${cShort}` : naLabel}
+                </p>
+                <p className="text-[10px] text-zinc-500">
+                  {report.resaleValueRightNow ? `${Math.round(report.resaleValueRightNow / report.offeredPrice * 100)}%` : ""}
+                </p>
+              </div>
+              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنة" : "1 Year"}</p>
+                <p className="text-sm font-bold text-amber-300">
+                  {report.resaleValue1Year ? `${fmtPrice(report.resaleValue1Year)} ${cShort}` : naLabel}
+                </p>
+                <p className="text-[10px] text-zinc-500">
+                  {report.resaleValue1Year ? `${Math.round(report.resaleValue1Year / report.offeredPrice * 100)}%` : ""}
+                </p>
+              </div>
+              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنتين" : "2 Years"}</p>
+                <p className="text-sm font-bold text-red-300">
+                  {report.resaleValue2Years ? `${fmtPrice(report.resaleValue2Years)} ${cShort}` : naLabel}
+                </p>
+                <p className="text-[10px] text-zinc-500">
+                  {report.resaleValue2Years ? `${Math.round(report.resaleValue2Years / report.offeredPrice * 100)}%` : ""}
+                </p>
+              </div>
+            </div>
+
+            {/* Visual depreciation bar */}
+            {report.resaleValueRightNow && report.resaleValue2Years && (
+              <div className="mb-4">
+                <div className="h-3 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-amber-400 to-red-400 transition-all" style={{ width: "100%" }} />
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[10px] text-cyan-400">{Math.round(report.resaleValueRightNow / report.offeredPrice * 100)}%</span>
+                  <span className="text-[10px] text-amber-400">{Math.round(report.resaleValue1Year! / report.offeredPrice * 100)}%</span>
+                  <span className="text-[10px] text-red-400">{Math.round(report.resaleValue2Years! / report.offeredPrice * 100)}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* Depreciation rate */}
+            {report.resaleDepreciationRate && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg bg-zinc-800/40 px-3 py-2">
+                <TrendingDown className="h-4 w-4 text-red-400" />
+                <p className="text-xs text-zinc-300">
+                  {lang === "ar"
+                    ? `معدل الانخفاض: ${report.resaleDepreciationRate}`
+                    : `Depreciation rate: ${report.resaleDepreciationRate}`}
+                </p>
+              </div>
+            )}
+
+            {/* Resale insight */}
+            {bilingual(report.resaleInsight) && (
+              <div className="rounded-lg bg-cyan-500/10 border border-cyan-500/20 p-3">
+                <p className="text-xs text-cyan-200 leading-relaxed">{bilingual(report.resaleInsight)}</p>
+              </div>
+            )}
+
+            {/* Cost of ownership */}
+            {report.resaleValue2Years && (
+              <div className="mt-3 rounded-lg bg-zinc-800/30 p-3">
+                <p className="text-xs text-zinc-400 mb-1">
+                  {lang === "ar" ? "التكلفة الفعلية بعد سنتين:" : "Actual cost after 2 years:"}
+                </p>
+                <p className="text-lg font-bold text-amber-400">
+                  {fmtPrice(report.offeredPrice - report.resaleValue2Years)} {cShort}
+                </p>
+                <p className="text-[10px] text-zinc-500">
+                  {lang === "ar" ? "(شريت بسعر كذا - بعت بسعر كذا = التكلفة الفعلية)" : "(Purchase price - Resale price = Your actual cost)"}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Trade-in Calculator */}
+          {report.tradeInValue && (
+            <div className="mb-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-5">
+              <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-purple-400">
+                <RefreshCw className="h-5 w-5" /> {lang === "ar" ? "حاسبة الاستبدال (Trade-in)" : "Trade-in Calculator"}
+              </h2>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
+                  <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "قيمة جهازك الحالي" : "Your device trade-in value"}</p>
+                  <p className="text-lg font-bold text-purple-300">{fmtPrice(report.tradeInValue)} {cShort}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
+                  <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "توفر" : "You save"}</p>
+                  <p className="text-lg font-bold text-emerald-400">{fmtPrice(report.tradeInValue)} {cShort}</p>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-400 mb-3">
+                {lang === "ar"
+                  ? `لو عندك الجهاز ده دلوقتي، ممكن تاخد بيه ${fmtPrice(report.tradeInValue)} ${cShort} من أي مابدا الاستبدال`
+                  : `If you have this device now, you can get ${fmtPrice(report.tradeInValue)} ${cShort} from trade-in platforms`}
+              </p>
+              <div className="rounded-lg bg-purple-500/10 border border-purple-500/20 p-3">
+                <p className="text-xs text-purple-200">
+                  {lang === "ar"
+                    ? `💡 لو عندك جهاز حالي وتاخد معاياه، هتوفر ${fmtPrice(report.tradeInValue)} ${cShort} — يعني هتطلع بـ ${report.product} بسعر ${fmtPrice(report.offeredPrice - report.tradeInValue)} ${cShort} بدل ${fmtPrice(report.offeredPrice)} ${cShort}`
+                    : `💡 If you trade in your current device, you save ${fmtPrice(report.tradeInValue)} ${cShort} — meaning you get ${report.product} for only ${fmtPrice(report.offeredPrice - report.tradeInValue)} ${cShort} instead of ${fmtPrice(report.offeredPrice)} ${cShort}`}
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Cons + Pros */}
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">

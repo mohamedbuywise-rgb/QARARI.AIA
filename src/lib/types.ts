@@ -1,6 +1,6 @@
 export type Language = "ar" | "en";
 export type Verdict = "good" | "fair" | "bad";
-export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare" | "guide";
+export type Screen = "input" | "report" | "history" | "profile" | "login" | "upgrade" | "compare" | "guide" | "advisor" | "tradein";
 
 export interface Currency {
   code: string;
@@ -20,7 +20,7 @@ export const currencies: Currency[] = [
 ];
 
 export const FREE_MONTHLY_LIMIT = 5;
-export const MONTHLY_PRICE = 149;
+export const MONTHLY_PRICE = 150;
 export const INSTAPAY_NUMBER = "01025204455";
 export const SUPPORT_WHATSAPP = "201143494418";
 
@@ -72,6 +72,15 @@ export interface AnalysisResult {
     analyzedCount: number;
     recentPrices: number[];
   } | null;
+  // Resale Value Prediction
+  resaleValueRightNow?: number;
+  resaleValue1Year?: number;
+  resaleValue2Years?: number;
+  resaleDepreciationRate?: string;
+  resaleInsight?: BilingualText;
+  // Trade-in Calculator
+  tradeInValue?: number;
+  tradeInPlatformLinks?: { name: string; url: string; estimatedPrice: number }[];
   createdAt: number;
 }
 

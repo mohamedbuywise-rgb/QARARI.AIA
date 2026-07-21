@@ -125,6 +125,12 @@ function validateAndNormalizeAnalysis(parsed: any): { ok: true; data: any } | { 
           },
         }
       : {}),
+    resaleValueRightNow: typeof parsed.resaleValueRightNow === "number" ? parsed.resaleValueRightNow : null,
+    resaleValue1Year: typeof parsed.resaleValue1Year === "number" ? parsed.resaleValue1Year : null,
+    resaleValue2Years: typeof parsed.resaleValue2Years === "number" ? parsed.resaleValue2Years : null,
+    resaleDepreciationRate: typeof parsed.resaleDepreciationRate === "string" ? parsed.resaleDepreciationRate : null,
+    resaleInsight: bilingualStrings(parsed.resaleInsight),
+    tradeInValue: typeof parsed.tradeInValue === "number" ? parsed.tradeInValue : null,
   };
 
   return { ok: true, data };
@@ -189,7 +195,13 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
   "hiddenRisks": { "ar": string[], "en": string[] },
   "finalTip": { "ar": string, "en": string },
   "betterAlternatives": [ { "name": string, "estimatedPrice": number, "reason": {"ar":string,"en":string}, "whySuitable": {"ar":string,"en":string} } ],
-  "negotiationScript": { "ar": string, "en": string }${tier === "premium" ? ',\n  "negotiationScriptVariants": { "polite": {"ar":string,"en":string}, "firm": {"ar":string,"en":string} }' : ""}
+  "negotiationScript": { "ar": string, "en": string }${tier === "premium" ? ',\n  "negotiationScriptVariants": { "polite": {"ar":string,"en":string}, "firm": {"ar":string,"en":string} }' : ""},
+  "resaleValueRightNow": number,
+  "resaleValue1Year": number,
+  "resaleValue2Years": number,
+  "resaleDepreciationRate": string,
+  "resaleInsight": { "ar": string, "en": string },
+  "tradeInValue": number
 }
 
 Rules:
@@ -205,6 +217,12 @@ Rules:
 - verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
 - All prices in ${currency}.
 - betterAlternatives: Suggest alternatives that are actually better value or similar in price, not 2x more expensive. All estimatedPrice values for betterAlternatives MUST be realistic current market prices in ${currency} and MUST match the specified PRODUCT CONDITION (${condition}).
+- resaleValueRightNow: estimate what this product would sell for on the second-hand market RIGHT NOW (in ${currency}), based on brand reputation, current demand, and the offeredPrice of ${offeredPrice} ${currency}.
+- resaleValue1Year: estimate what this product will be worth on the second-hand market in 1 year from now. Typically Apple products retain 65-75%, Samsung 50-65%, other brands 35-55%.
+- resaleValue2Years: estimate what this product will be worth on the second-hand market in 2 years from now.
+- resaleDepreciationRate: a short string like "30% per year" or "25% per year" describing the average annual depreciation.
+- resaleInsight: a bilingual text with a brief insight about the resale value of this product. E.g. in Arabic: "آبل بتحتفظ بقيمة عالية جداً في السوق، بعد سنة ممكن تبيعه بـ 65% من سعره" and in English: "Apple retains value very well in the market, after 1 year you can sell for ~65% of current price."
+- tradeInValue: estimate what a trade-in platform would offer for this product right now (in ${currency}). This is typically 60-80% of the resaleValueRightNow.
 - Return ONLY the JSON object, nothing else.`;
 }
 
