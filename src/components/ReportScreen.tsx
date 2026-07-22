@@ -11,7 +11,7 @@ import {
   Search, Info, TrendingUp, AlertTriangle, Check, X, Compass,
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
-  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign,
+  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign, Bot, Brain,
 } from "lucide-react";
 
 export function ReportScreen() {
@@ -545,9 +545,7 @@ export function ReportScreen() {
           <Button onClick={handleCopyNegotiation} variant="outline" className="flex-1 border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400">
             <Copy className="h-4 w-4" /> {t("copy")}
           </Button>
-          <Button onClick={handleWhatsAppShare} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-500">
-            <Share2 className="h-4 w-4" /> {t("shareWhatsApp")}
-          </Button>
+
         </div>
       </div>
 
@@ -639,20 +637,33 @@ export function ReportScreen() {
         </Button>
       </div>
 
-      {/* Floating Chat Bubble */}
-      <button
-        onClick={() => setShowChat(!showChat)}
-        className={`fixed bottom-6 ${dir === "rtl" ? "left-4" : "right-4"} z-50 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-[#0B0B0F] shadow-xl shadow-amber-500/30 transition-transform hover:scale-105`}
-      >
-        <MessageCircle className="h-5 w-5" />
-      </button>
+      {/* Smart Assistant Trigger */}
+      <div className="mt-6 flex justify-center">
+        <button
+          onClick={() => setShowChat(true)}
+          className="group relative flex items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 px-6 py-4 ring-1 ring-amber-500/20 transition-all hover:ring-amber-500/50 shadow-xl"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-500/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-[#0B0B0F] shadow-lg shadow-amber-500/20">
+            <Bot className="h-6 w-6" />
+          </div>
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-bold text-amber-400">
+              {lang === "ar" ? "اسأل لو لسه محتار" : "Ask if you're still unsure"}
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              {lang === "ar" ? "مساعدك الذكي جاهز للرد على أي سؤال" : "Your AI assistant is ready to help"}
+            </span>
+          </div>
+        </button>
+      </div>
 
       {/* Chat Panel */}
       {showChat && (
         <div className={`fixed bottom-20 ${dir === "rtl" ? "left-4" : "right-4"} z-50 flex h-80 w-80 flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-[#0B0B0F] shadow-2xl`}>
-          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-4 py-2.5">
+          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-4 py-3">
             <span className="flex items-center gap-2 text-sm font-bold text-amber-400">
-              <MessageCircle className="h-4 w-4" /> {t("askAssistant")}
+              <Bot className="h-4 w-4" /> {t("askAssistant")}
             </span>
             <div className="flex items-center gap-2">
               {!isExample && (
@@ -665,14 +676,17 @@ export function ReportScreen() {
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {chatMessages.length === 0 ? (
-              <p className="text-center text-xs text-zinc-500 mt-8">{t("askAssistantHint")}</p>
+              <div className="flex flex-col items-center justify-center h-full text-center opacity-50">
+                <Brain className="h-10 w-10 text-zinc-600 mb-2" />
+                <p className="text-xs text-zinc-500">{t("askAssistantHint")}</p>
+              </div>
             ) : (
               chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[80%] rounded-lg px-3 py-2 text-xs ${
-                    msg.role === "user" ? "bg-amber-500/20 text-amber-100" : "bg-zinc-800 text-zinc-300"
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                    msg.role === "user" ? "bg-amber-500 text-black font-medium" : "bg-zinc-800 text-zinc-200 border border-zinc-700"
                   }`}>
                     {msg.content}
                   </div>
@@ -681,11 +695,11 @@ export function ReportScreen() {
             )}
             {chatLoading && (
               <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-400">{t("chatThinking")}</div>
+                <div className="rounded-xl bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-400">{t("chatThinking")}</div>
               </div>
             )}
           </div>
-          <div className="border-t border-zinc-800 bg-zinc-900/50 p-2">
+          <div className="border-t border-zinc-800 bg-zinc-900/50 p-3">
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -694,25 +708,23 @@ export function ReportScreen() {
                 onKeyDown={(e) => e.key === "Enter" && sendChat()}
                 placeholder={t("typeMessage")}
                 disabled={chatLoading || (chatLimitHit && !isExample)}
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
+                className="flex-1 rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
               />
               <button
                 onClick={toggleListening}
                 disabled={chatLoading || (chatLimitHit && !isExample)}
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-50 ${
-                  listening ? "bg-red-500/20 text-red-400 animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-amber-500/15"
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-50 ${
+                  listening ? "bg-red-500 text-white animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
                 }`}
-                title={t("voiceInput")}
               >
-                <Mic className="h-4 w-4" />
+                <Mic className="h-5 w-5" />
               </button>
               <button
                 onClick={sendChat}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-[#0B0B0F] hover:bg-amber-400 disabled:opacity-50"
-                title={t("send")}
+                disabled={chatLoading || (chatLimitHit && !isExample) || !chatInput.trim()}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-black hover:bg-amber-300 disabled:opacity-50"
               >
-                <Send className="h-4 w-4" />
+                <Send className="h-5 w-5" />
               </button>
             </div>
           </div>

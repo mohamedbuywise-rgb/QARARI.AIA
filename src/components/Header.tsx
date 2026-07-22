@@ -22,32 +22,7 @@ export function Header() {
         </button>
 
         <div className="flex items-center gap-1.5">
-          {/* Premium AI Advisor Button */}
-          <button
-            onClick={() => {
-              if (!user) {
-                navigate("login");
-              } else {
-                navigate("advisor");
-              }
-            }}
-            className={`group relative flex items-center gap-2 overflow-hidden rounded-full px-4 py-1.5 transition-all ${
-              screen === "advisor" 
-                ? "bg-amber-400 text-black shadow-lg shadow-amber-500/30" 
-                : "bg-zinc-900 text-amber-400 ring-1 ring-amber-500/30 hover:bg-zinc-800"
-            }`}
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-            <Zap className={`h-4 w-4 ${screen === "advisor" ? "fill-black" : "animate-pulse"}`} />
-            <span className="text-xs font-bold uppercase tracking-tight">
-              {lang === "ar" ? "المساعد الذكي" : "AI Advisor"}
-            </span>
-            {isPremium && (
-              <div className="flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
-            )}
-          </button>
 
-          <div className="mx-1 h-6 w-[1px] bg-zinc-800" />
 
           <button
             onClick={() => navigate("input")}

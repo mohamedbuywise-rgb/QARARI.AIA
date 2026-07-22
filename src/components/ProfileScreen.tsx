@@ -138,7 +138,8 @@ export function ProfileScreen() {
         )}
       </div>
 
-      {/* Referral */}
+      {/* Referral - Temporarily hidden */}
+      {/* 
       <div className="mb-6 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
         <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-amber-400">
           <Gift className="h-4 w-4" /> {t("referralCode")}
@@ -155,6 +156,7 @@ export function ProfileScreen() {
           {t("inviteCount")}: <span className="font-bold text-amber-400">{user.inviteCount}</span>
         </p>
       </div>
+      */}
 
       {/* Upgrade CTA (if free) */}
       {!isPremium && (
@@ -173,14 +175,6 @@ export function ProfileScreen() {
         <h3 className="mb-3 text-sm font-bold text-amber-400">{t("contactSupport")}</h3>
         <p className="mb-3 text-xs text-zinc-500">{t("needHelp")}</p>
         <div className="flex gap-3">
-          <a
-            href={`https://wa.me/${SUPPORT_WHATSAPP}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-500/10"
-          >
-            <MessageCircle className="h-4 w-4" /> {t("supportWhatsapp")}
-          </a>
           <a
             href="https://t.me/qarari_support"
             target="_blank"

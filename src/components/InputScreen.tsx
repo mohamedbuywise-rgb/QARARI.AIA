@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sparkles, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
+import { Sparkles, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw, Bot, Mic, Send } from "lucide-react";
 
 export function InputScreen() {
   const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory } = useApp();
@@ -29,6 +29,75 @@ export function InputScreen() {
   const [maxScans, setMaxScans] = useState<number>(FREE_MONTHLY_LIMIT);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Chat Assistant State
+  const [showChat, setShowChat] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
+
+  const toggleListening = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { showToast(lang === "ar" ? "المتصفح لا يدعم الإدخال الصوتي" : "Browser doesn't support voice input"); return; }
+    if (listening) { recognitionRef.current?.stop(); setListening(false); return; }
+    const rec = new SR();
+    rec.lang = lang === "ar" ? "ar-EG" : "en-US";
+    rec.interimResults = false;
+    rec.onresult = (e: any) => {
+      const transcript = e.results[0][0].transcript;
+      setChatInput((prev) => (prev ? prev + " " : "") + transcript);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    rec.start();
+    recognitionRef.current = rec;
+    setListening(true);
+  };
+
+  const sendChat = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    if (!session?.user) {
+      showToast(lang === "ar" ? "برجاء تسجيل الدخول أولاً" : "Please login first");
+      navigate("login");
+      return;
+    }
+
+    const question = chatInput.trim();
+    setChatMessages((prev) => [...prev, { role: "user", content: question }]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          question,
+          mode: "advisor",
+          language: lang,
+          history: chatMessages.slice(-5),
+        }),
+      });
+      const data = await res.json();
+      if (data.answer) {
+        setChatMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
+      }
+    } catch {
+      showToast(t("chatError"));
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   const Icon = useMemo(() => getCategoryIcon(product), [product]);
 
@@ -334,52 +403,93 @@ export function InputScreen() {
             {!isPremium && <Crown className="ml-1 h-3 w-3" />}
           </Button>
 
-          {/* Smart Advisor Card - Premium */}
-          <div className="mt-6 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-600/5 to-transparent p-5 shadow-lg shadow-amber-500/5">
-            <div className="flex items-start gap-4">
-              <div className="relative">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-lg shadow-amber-500/20">
-                  <Brain className="h-6 w-6 text-black" />
-                </div>
-                <div className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 shadow-lg" />
+          {/* Smart Assistant Trigger */}
+          <div className="mt-8 flex justify-center">
+            <button
+              onClick={() => setShowChat(true)}
+              className="group relative flex items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 px-6 py-4 ring-1 ring-amber-500/20 transition-all hover:ring-amber-500/50 shadow-xl"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-500/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-[#0B0B0F] shadow-lg shadow-amber-500/20">
+                <Bot className="h-6 w-6" />
               </div>
-              <div className="flex-1">
-                <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wide">
-                  {lang === "ar" ? "مستشار الشراء الذكي" : "Smart Shopping Advisor"}
-                </h3>
-                <p className="text-xs text-zinc-400 mt-1">
-                  {lang === "ar"
-                    ? "اسألني أي سؤال عن الشراء أو المقارنة.. وموجود لمساعدتك في أي وقت دون تعقيد."
-                    : "Ask me anything about shopping or comparison.. I'm here to help anytime without complexity."}
-                </p>
-                <div className="mt-3 flex items-center gap-2 rounded-lg bg-zinc-800/50 px-3 py-2">
-                  <MessageCircle className="h-3.5 w-3.5 text-amber-400" />
-                  <span className="text-[10px] text-zinc-500 italic">
-                    {lang === "ar"
-                      ? "مثال: معايا 30 ألف وعايز لابتوب للدراسة..."
-                      : "Example: I have 30K EGP and need a laptop for studying..."}
-                  </span>
+              <div className="flex flex-col items-start">
+                <span className="text-sm font-bold text-amber-400">
+                  {lang === "ar" ? "اسأل لو لسه محتار" : "Ask if you're still unsure"}
+                </span>
+                <span className="text-[10px] text-zinc-500 text-right">
+                  {lang === "ar" ? "مساعدك الذكي جاهز للرد على أي سؤال" : "Your AI assistant is ready to help"}
+                </span>
+              </div>
+            </button>
+          </div>
+
+          {/* Chat Panel */}
+          {showChat && (
+            <div className="fixed inset-x-4 bottom-20 z-50 mx-auto flex h-96 max-w-lg flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-[#0B0B0F] shadow-2xl sm:right-4 sm:left-auto sm:mx-0">
+              <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-4 py-3">
+                <span className="flex items-center gap-2 text-sm font-bold text-amber-400">
+                  <Bot className="h-4 w-4" /> {t("askAssistant")}
+                </span>
+                <button onClick={() => setShowChat(false)} className="text-zinc-500 hover:text-zinc-300">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {chatMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center opacity-50">
+                    <Brain className="h-10 w-10 text-zinc-600 mb-2" />
+                    <p className="text-xs text-zinc-500">{t("askAssistantHint")}</p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                        msg.role === "user" ? "bg-amber-500 text-black font-medium" : "bg-zinc-800 text-zinc-200 border border-zinc-700"
+                      }`}>
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <div className="rounded-xl bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-400">{t("chatThinking")}</div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+              <div className="border-t border-zinc-800 bg-zinc-900/50 p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                    placeholder={t("typeMessage")}
+                    disabled={chatLoading}
+                    className="flex-1 rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
+                  />
+                  <button
+                    onClick={toggleListening}
+                    disabled={chatLoading}
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-50 ${
+                      listening ? "bg-red-500 text-white animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
+                    }`}
+                  >
+                    <Mic className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={sendChat}
+                    disabled={chatLoading || !chatInput.trim()}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-black hover:bg-amber-300 disabled:opacity-50"
+                  >
+                    <Send className="h-5 w-5" />
+                  </button>
                 </div>
               </div>
             </div>
-            <Button
-              onClick={() => {
-                if (!session?.user) {
-                  showToast(
-                    lang === "ar"
-                      ? "عشان أقدر أفتكر اهتماماتك وأقدملك نصائح مخصصة ليك، ياريت تسجل دخولك"
-                      : "To remember your interests and provide personalized advice, please sign in"
-                  );
-                  navigate("login");
-                  return;
-                }
-                navigate("advisor");
-              }}
-              className="mt-4 w-full bg-gradient-to-r from-amber-400 to-amber-600 text-black font-bold hover:from-amber-300 hover:to-amber-500 shadow-lg shadow-amber-500/20"
-            >
-              <MessageCircle className="h-4 w-4" /> {lang === "ar" ? "ابدأ المحادثة مع المستشار" : "Start conversation with advisor"}
-            </Button>
-          </div>
+          )}
 
 
 

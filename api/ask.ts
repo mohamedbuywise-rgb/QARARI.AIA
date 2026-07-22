@@ -13,7 +13,7 @@ const MAX_CHAT_MESSAGES_PER_REPORT = 20;
 // Open shopping advisor mode (no report context required) — allows unlimited
 // free-form shopping questions. Premium users get unlimited queries; free users
 // are capped per month.
-const MAX_ADVISOR_MESSAGES_PER_MONTH_FREE = 300;
+const MAX_ADVISOR_MESSAGES_PER_MONTH_FREE = 20;
 
 interface ChatTurn {
   role: "user" | "assistant";
