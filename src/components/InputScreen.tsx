@@ -12,7 +12,7 @@ import { TypingText } from "@/components/TypingText";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sparkles, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
+import { Zap, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
 
 export function InputScreen() {
   const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory } = useApp();
@@ -132,7 +132,7 @@ export function InputScreen() {
       <div className="mb-6 text-center">
         <div className="relative mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/30">
           <div className="absolute inset-0 animate-pulse rounded-2xl bg-amber-400/20 blur-lg" />
-          <Sparkles className="relative h-8 w-8 text-[#0B0B0F]" />
+          <Zap className="relative h-8 w-8 text-[#0B0B0F]" />
         </div>
         <h1 className="font-serif text-3xl font-bold text-amber-400">{t("appName")}</h1>
         <div className="mt-1 h-5">

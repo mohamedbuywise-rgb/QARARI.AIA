@@ -13,7 +13,7 @@ import {
   Search, Info, TrendingUp, TrendingDown, AlertTriangle, Check, X, Compass,
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
-  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign,
+  GitCompare, Crown, Users, RefreshCw, DollarSign,
 } from "lucide-react";
 
 export function ReportScreen() {
@@ -223,7 +223,7 @@ export function ReportScreen() {
 
       {isExample && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-medium text-amber-400">
-          <Sparkles className="h-4 w-4" /> {t("example")}
+          <Zap className="h-4 w-4" /> {t("example")}
         </div>
       )}
 
@@ -350,7 +350,7 @@ export function ReportScreen() {
         </ol>
         {isPremium && (
           <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500">
-            <Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}
+            <Zap className="h-3 w-3" /> {t("expandedAnalysis")}
           </p>
         )}
       </div>
@@ -415,7 +415,7 @@ export function ReportScreen() {
                   </li>
                 ))}
               </ul>
-              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
+              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Zap className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
             <div className="card-hover rounded-xl border border-emerald-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
@@ -428,7 +428,7 @@ export function ReportScreen() {
                   </li>
                 ))}
               </ul>
-              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
+              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Zap className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
           </>
         ) : (
@@ -444,7 +444,7 @@ export function ReportScreen() {
                   </li>
                 ))}
               </ul>
-              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
+              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Zap className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
             <div className="card-hover rounded-xl border border-red-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-red-400">
@@ -457,7 +457,7 @@ export function ReportScreen() {
                   </li>
                 ))}
               </ul>
-              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
+              {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Zap className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
           </>
         )}
@@ -545,7 +545,7 @@ export function ReportScreen() {
           onClick={() => setShowChat(true)}
           className="cta-glow rounded-full bg-gradient-to-r from-amber-400 to-amber-600 px-8 py-6 text-[#0B0B0F] font-bold shadow-xl shadow-amber-500/20 hover:scale-105 transition-transform"
         >
-          <Bot className="h-5 w-5" /> {t("chatWithAdvisor")}
+          <Zap className="h-5 w-5" /> {t("chatWithAdvisor")}
         </Button>
       </div>
 

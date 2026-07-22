@@ -3,7 +3,7 @@ import { useApp } from "@/lib/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  MessageCircle, Send, Mic, ChevronLeft, Bot, Brain, Sparkles, X, Lock, Zap, ShieldCheck, TrendingUp, RefreshCw
+  MessageCircle, Send, Mic, ChevronLeft, Bot, Brain, X, Lock, Zap, ShieldCheck, TrendingUp, RefreshCw
 } from "lucide-react";
 
 interface ChatMessage {
@@ -100,7 +100,7 @@ export function AdvisorScreen() {
         </div>
         {isPremium && (
           <div className="hidden sm:flex items-center gap-2 rounded-full bg-amber-400/10 px-3 py-1 border border-amber-400/20">
-            <Sparkles className="h-3 w-3 text-amber-400" />
+            <Zap className="h-3 w-3 text-amber-400" />
             <span className="text-[10px] font-bold text-amber-400 uppercase">Premium Member</span>
           </div>
         )}

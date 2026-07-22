@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle, Bot, Zap } from "lucide-react";
+import { Globe, History, User, Plus, GitCompare, HelpCircle, Bot, Zap } from "lucide-react";
 
 export function Header() {
   const { lang, setLang, t, navigate, screen, isPremium, user } = useApp();
@@ -30,7 +30,7 @@ export function Header() {
               }}
             />
             <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-lg shadow-amber-500/30">
-              <Sparkles className="h-5 w-5 text-[#0B0B0F]" />
+              <Zap className="h-5 w-5 text-[#0B0B0F]" />
             </div>
           </div>
           <div className="flex flex-col items-start leading-none">

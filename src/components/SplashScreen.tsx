@@ -180,7 +180,7 @@ export function SplashScreen({ onFinish }: { onFinish: () => void }) {
           <div className="relative mb-6">
              <div className="absolute inset-0 blur-2xl bg-amber-400/20 rounded-full animate-pulse" />
              <div className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-2xl shadow-amber-500/40">
-                <Sparkles className="h-10 w-10 text-black" />
+                <Zap className="h-10 w-10 text-black" />
              </div>
           </div>
           <div className="gold-shimmer text-4xl font-bold tracking-wide">

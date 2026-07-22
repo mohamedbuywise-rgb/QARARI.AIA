@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sparkles, Mail, Lock, ChevronLeft, User } from "lucide-react";
+import { Zap, Mail, Lock, ChevronLeft, User } from "lucide-react";
 
 export function LoginScreen() {
   const { t, lang, dir, navigate, signIn, signUp, showToast, pendingAction, setPendingAction } = useApp();
@@ -69,7 +69,7 @@ export function LoginScreen() {
     <div className="mx-auto flex min-h-[80vh] max-w-md flex-col items-center justify-center px-4 py-6">
       <div className="mb-8 text-center">
         <div className="mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/20">
-          <Sparkles className="h-8 w-8 text-[#0B0B0F]" />
+          <Zap className="h-8 w-8 text-[#0B0B0F]" />
         </div>
         <h1 className="font-serif text-2xl font-bold text-amber-400">{t("appName")}</h1>
         <p className="mt-1 text-sm text-zinc-400">{t("welcomeBack")}</p>
