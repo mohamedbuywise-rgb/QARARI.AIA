@@ -3,7 +3,7 @@ import { useApp } from "@/lib/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  MessageCircle, Send, Mic, ChevronLeft, Bot, Brain, Sparkles, X, Lock, Zap, ShieldCheck, TrendingUp
+  MessageCircle, Send, Mic, ChevronLeft, Bot, Brain, Sparkles, X, Lock, Zap, ShieldCheck, TrendingUp, RefreshCw
 } from "lucide-react";
 
 interface ChatMessage {
@@ -75,9 +75,9 @@ export function AdvisorScreen() {
   };
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-80px)] max-w-3xl flex-col px-4 py-4">
+    <div className="mx-auto flex h-[calc(100vh-80px)] max-w-3xl flex-col px-4 py-4 slide-up">
       {/* Premium Header */}
-      <div className="mb-4 flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-500/10 to-amber-600/5 p-4 border border-amber-500/20 shadow-lg shadow-amber-500/5">
+      <div className="mb-4 flex items-center justify-between rounded-2xl bg-gradient-to-r from-amber-500/10 to-amber-600/5 p-4 border border-amber-500/20 shadow-lg shadow-amber-500/10 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-400 text-black shadow-lg shadow-amber-500/20">
@@ -93,7 +93,7 @@ export function AdvisorScreen() {
             </h1>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
-                <ShieldCheck className="h-3 w-3" /> متصل بأسعار السوق
+                <ShieldCheck className="h-3 w-3" /> {lang === "ar" ? "متصل بأسعار السوق" : "Market Live Sync"}
               </span>
             </div>
           </div>
@@ -107,7 +107,7 @@ export function AdvisorScreen() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-900/40 p-6 mb-4 space-y-6 scrollbar-hide">
+      <div className="flex-1 overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-900/40 p-6 mb-4 space-y-6 scrollbar-hide backdrop-blur-sm">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="mb-6 relative">
@@ -130,7 +130,7 @@ export function AdvisorScreen() {
                 <button
                   key={i}
                   onClick={() => { setInput(q); }}
-                  className="rounded-2xl border border-zinc-800 bg-zinc-800/30 p-4 text-right text-xs text-zinc-400 transition-all hover:border-amber-500/30 hover:bg-amber-500/5 hover:text-amber-400"
+                  className="card-hover rounded-2xl border border-zinc-800 bg-zinc-800/30 p-4 text-right text-xs text-zinc-400 transition-all hover:border-amber-500/30 hover:bg-amber-500/5 hover:text-amber-400"
                 >
                   {q}
                 </button>
@@ -184,9 +184,9 @@ export function AdvisorScreen() {
           <button
             onClick={handleSend}
             disabled={!input.trim() || loading}
-            className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-400 text-black transition-all hover:bg-amber-300 disabled:opacity-40 shadow-lg shadow-amber-500/20"
+            className="cta-glow flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 text-black transition-all hover:from-amber-300 hover:to-amber-500 disabled:opacity-40 shadow-lg shadow-amber-500/20"
           >
-            <Send className="h-5 w-5" />
+            {loading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
           </button>
         </div>
         <p className="mt-2 text-center text-[10px] text-zinc-600">

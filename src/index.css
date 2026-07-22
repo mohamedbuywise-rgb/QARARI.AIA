@@ -20,3 +20,128 @@ html[dir="rtl"] body {
 .value-banner {
   animation: glowPulse 2.5s ease-in-out infinite;
 }
+
+/* ===== QARARI FIRE ANIMATIONS ===== */
+
+/* Gold shimmer sweep */
+@keyframes goldShimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.gold-shimmer {
+  background: linear-gradient(90deg, #D4AF37 0%, #f6dfa0 30%, #D4AF37 50%, #f6dfa0 80%, #D4AF37 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: goldShimmer 3s linear infinite;
+}
+
+/* CTA button glow pulse */
+@keyframes ctaGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(212,175,55,0.3), 0 0 20px rgba(212,175,55,0.15), 0 4px 15px rgba(212,175,55,0.2);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(212,175,55,0.6), 0 0 40px rgba(212,175,55,0.3), 0 4px 25px rgba(212,175,55,0.4);
+  }
+}
+.cta-glow {
+  animation: ctaGlow 2s ease-in-out infinite;
+}
+
+/* Floating particle drift */
+@keyframes floatUp {
+  0% { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 0.6; }
+  100% { transform: translateY(-100vh) translateX(var(--drift, 20px)) scale(0.3); opacity: 0; }
+}
+
+/* Score ring fill animation */
+@keyframes ringFill {
+  from { stroke-dashoffset: 283; }
+  to { stroke-dashoffset: var(--target-offset, 0); }
+}
+.ring-fill {
+  animation: ringFill 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: 0.3s;
+  stroke-dashoffset: 283;
+}
+
+/* Confetti fall */
+@keyframes confettiFall {
+  0% { transform: translateY(-20px) rotate(0deg) scale(1); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg) scale(0.5); opacity: 0; }
+}
+
+/* Card hover lift */
+.card-hover {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 8px 30px rgba(212,175,55,0.12);
+}
+
+/* Typing cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.typing-cursor::after {
+  content: '|';
+  color: #D4AF37;
+  animation: blink 1s step-end infinite;
+  margin-inline-start: 2px;
+}
+
+/* Verdict badge pop */
+@keyframes verdictPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.15); }
+  80% { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.verdict-pop {
+  animation: verdictPop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Shimmer loading skeleton */
+@keyframes shimmerSkeleton {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.shimmer-skeleton {
+  background: linear-gradient(90deg, rgba(39,39,42,0.8) 25%, rgba(63,63,70,0.6) 50%, rgba(39,39,42,0.8) 75%);
+  background-size: 400px 100%;
+  animation: shimmerSkeleton 1.4s ease-in-out infinite;
+}
+
+/* Ambient glow orb */
+@keyframes orbFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.95); }
+}
+.orb-float {
+  animation: orbFloat 8s ease-in-out infinite;
+}
+
+/* Slide in from bottom */
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.slide-up {
+  animation: slideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Number count-up flash */
+@keyframes numberFlash {
+  0% { color: #D4AF37; text-shadow: 0 0 20px rgba(212,175,55,0.8); }
+  100% { color: inherit; text-shadow: none; }
+}
+.number-flash {
+  animation: numberFlash 0.5s ease-out forwards;
+}

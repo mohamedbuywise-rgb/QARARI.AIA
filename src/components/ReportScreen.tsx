@@ -1,5 +1,7 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { FutureValueCard } from "@/components/FutureValueCard";
+import { ConfettiCelebration } from "@/components/ConfettiCelebration";
+import { ScoreRing } from "@/components/ScoreRing";
 import { useApp } from "@/lib/AppContext";
 import { supabase } from "@/lib/supabase";
 import { getCategoryIcon } from "@/lib/categoryIcons";
@@ -16,6 +18,8 @@ import {
 
 export function ReportScreen() {
   const { t, lang, dir, currentReport, navigate, saveToHistory, history, user, session, showToast, isPremium, requireAuth } = useApp();
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
   const [showFeedbackBox, setShowFeedbackBox] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
@@ -37,15 +41,22 @@ export function ReportScreen() {
     return null;
   }
 
-  // Temporary debug log — remove once the null/undefined-field rendering
-  // issue is confirmed fixed in production.
+  // Mount animation
+  useEffect(() => {
+    const timer = setTimeout(() => setMounted(true), 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Confetti on good deal
+  useEffect(() => {
+    if (report?.verdict === "good") {
+      const timer = setTimeout(() => setShowConfetti(true), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [report?.verdict]);
+
   console.log("FULL AI RESPONSE:", report);
 
-  // ---- Defensive formatting helpers ----
-  // The AI is allowed to return null for pricing fields when it has no
-  // reliable market data (see api/analyze.ts), and any of the optional
-  // fields can legitimately be missing. Never assume a field exists before
-  // calling a method on it.
   const naLabel = lang === "ar" ? "غير متوفر" : "N/A";
   const fmtPrice = (n: unknown): string => (typeof n === "number" && !Number.isNaN(n) ? n.toLocaleString() : naLabel);
   const bilingualSafe = (bt: { ar?: string; en?: string } | null | undefined): string =>
@@ -128,26 +139,20 @@ export function ReportScreen() {
 
   const sendChat = async () => {
     if (!chatInput.trim() || chatLoading) return;
-
-    // Demo/example reports never hit the real API — no product to actually
-    // research and no point spending a Groq call on it.
     if (isExample) {
       setChatMessages((prev) => [...prev, { role: "user", content: chatInput }, { role: "assistant", content: t("chatDisabledExample") }]);
       setChatInput("");
       return;
     }
-
     if (!isPremium && (chatLimitHit || chatRemaining <= 0)) {
       setChatLimitHit(true);
       return;
     }
-
     const question = chatInput.trim();
     const outgoingHistory = [...chatMessages, { role: "user" as const, content: question }];
     setChatMessages(outgoingHistory);
     setChatInput("");
     setChatLoading(true);
-
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
@@ -168,21 +173,15 @@ export function ReportScreen() {
           language: lang,
         }),
       });
-
       if (res.status === 403) {
-        if (!isPremium) {
-          setChatLimitHit(true);
-          setChatRemaining(0);
-        }
+        if (!isPremium) { setChatLimitHit(true); setChatRemaining(0); }
         setChatMessages((prev) => [...prev, { role: "assistant", content: t("chatLimitReached") }]);
         return;
       }
-
       if (!res.ok) {
         setChatMessages((prev) => [...prev, { role: "assistant", content: t("chatError") }]);
         return;
       }
-
       const data = await res.json();
       setChatMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
       if (!data.unlimited && typeof data.remaining === "number") {
@@ -197,13 +196,8 @@ export function ReportScreen() {
   };
 
   const handleCompare = () => {
-    if (!isPremium) {
-      navigate("upgrade");
-      return;
-    }
+    if (!isPremium) { navigate("upgrade"); return; }
     if (!compareProduct.trim()) return;
-    // Hand off product B to CompareScreen, which pre-fills product A / price A
-    // from currentReport and picks this up on mount.
     sessionStorage.setItem("qarari-compare-prefill-b", compareProduct.trim());
     setShowCompareInput(false);
     setCompareProduct("");
@@ -214,7 +208,19 @@ export function ReportScreen() {
   const bilingualArr = (ba: { ar: string[]; en: string[] } | null | undefined) => bilingualArrSafe(ba);
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 pb-24">
+    <div
+      className="mx-auto max-w-3xl px-4 py-6 pb-24"
+      style={{
+        opacity: mounted ? 1 : 0,
+        transform: mounted ? "translateY(0)" : "translateY(20px)",
+        transition: "opacity 0.5s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+      }}
+    >
+      {/* Confetti for good deals */}
+      {showConfetti && (
+        <ConfettiCelebration onDone={() => setShowConfetti(false)} />
+      )}
+
       {isExample && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-medium text-amber-400">
           <Sparkles className="h-4 w-4" /> {t("example")}
@@ -233,20 +239,30 @@ export function ReportScreen() {
             <span className="rounded-lg bg-zinc-800/60 px-2.5 py-1 text-sm text-zinc-300">
               {fmtPrice(report.offeredPrice)} {cShort}
             </span>
-            <span className={`rounded-lg ${vc.bg} ${vc.border} border px-2.5 py-1 text-sm font-medium ${vc.color}`}>
+            <span className={`verdict-pop rounded-lg ${vc.bg} ${vc.border} border px-2.5 py-1 text-sm font-medium ${vc.color}`}>
               {t(report.verdict === "good" ? "goodDeal" : report.verdict === "fair" ? "fairDeal" : "badDeal")}
             </span>
             {typeof report.moneySaved === "number" && report.moneySaved > 0 && (
-              <span className="rounded-lg bg-emerald-500/10 px-2.5 py-1 text-sm font-medium text-emerald-400 ring-1 ring-emerald-500/20">
+              <span className="verdict-pop rounded-lg bg-emerald-500/10 px-2.5 py-1 text-sm font-medium text-emerald-400 ring-1 ring-emerald-500/20" style={{ animationDelay: "0.15s" }}>
                 {t("moneySaved")}: {fmtPrice(report.moneySaved)} {cShort}
               </span>
             )}
           </div>
         </div>
+        {/* Score Ring */}
+        {typeof report.overallScore === "number" && (
+          <div className="shrink-0">
+            <ScoreRing
+              score={report.overallScore}
+              size={80}
+              label={lang === "ar" ? "التقييم" : "Score"}
+            />
+          </div>
+        )}
       </div>
 
       {/* Market Overview */}
-      <div className="mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
+      <div className="card-hover mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
         <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
           <Search className="h-5 w-5" /> {t("marketOverview")}
         </h2>
@@ -274,9 +290,9 @@ export function ReportScreen() {
         )}
       </div>
 
-      {/* Community Radar — REAL data with enhanced social proof */}
+      {/* Community Radar */}
       {report.communityInsights && report.communityInsights.analyzedCount >= 3 && (
-        <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+        <div className="card-hover mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
           <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-emerald-400">
             <Users className="h-5 w-5" /> {t("communityInsightsTitle")}
           </h2>
@@ -315,20 +331,13 @@ export function ReportScreen() {
                   </span>
                 ))}
               </div>
-              <div className="mt-3 rounded-lg bg-zinc-800/30 p-2.5">
-                <p className="text-xs text-zinc-400">
-                  {lang === "ar"
-                    ? `📊 ${report.communityInsights.recentPrices!.filter((p) => p <= report.offeredPrice).length} من ${report.communityInsights.recentPrices!.length} شخص دفعوا نفس السعر أو أقل`
-                    : `📊 ${report.communityInsights.recentPrices!.filter((p) => p <= report.offeredPrice).length} out of ${report.communityInsights.recentPrices!.length} paid the same or less`}
-                </p>
-              </div>
             </div>
           )}
         </div>
       )}
 
       {/* Final Verdict */}
-      <div className="mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
+      <div className="card-hover mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
         <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
           <Info className="h-5 w-5" /> {t("finalVerdict")}
         </h2>
@@ -359,13 +368,13 @@ export function ReportScreen() {
 
       {/* Future + Regret */}
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
+        <div className="card-hover rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-amber-400">
             <TrendingUp className="h-4 w-4" /> {t("futureCompatibility")}
           </h3>
           <p className="text-sm text-zinc-300">{bilingual(report.futureCompatibility)}</p>
         </div>
-        <div className="rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
+        <div className="card-hover rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-amber-400">
             <AlertTriangle className="h-4 w-4" /> {t("regretProbability")}
           </h3>
@@ -379,63 +388,6 @@ export function ReportScreen() {
           <p className="mt-2 text-sm text-zinc-300">{bilingual(report.regretJustification)}</p>
         </div>
       </div>
-
-      {/* Resale Value Prediction + Trade-in Calculator */}
-      {(report.resaleValueRightNow || report.resaleValue1Year || report.tradeInValue) && (
-        <>
-          <div className="mb-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5">
-            <h2 className="mb-4 flex items-center gap-2 font-serif text-lg font-bold text-cyan-400">
-              <TrendingDown className="h-5 w-5" /> {lang === "ar" ? "قيمة المنتج بعد سنة" : "Resale Value Prediction"}
-            </h2>
-
-            {/* Current price vs resale value after 2 years */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
-                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "القيمة دلوقتي" : "Current Value"}</p>
-                <p className="text-sm font-bold text-cyan-300">
-                  {report.resaleValueRightNow ? `${fmtPrice(report.resaleValueRightNow)} ${cShort}` : naLabel}
-                </p>
-                <p className="text-[10px] text-zinc-500">
-                  {report.resaleValueRightNow ? `${Math.round(report.resaleValueRightNow / report.offeredPrice * 100)}%` : ""}
-                </p>
-              </div>
-              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
-                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنتين" : "After 2 Years"}</p>
-                <p className="text-sm font-bold text-red-300">
-                  {report.resaleValue2Years ? `${fmtPrice(report.resaleValue2Years)} ${cShort}` : naLabel}
-                </p>
-                <p className="text-[10px] text-zinc-500">
-                  {report.resaleValue2Years ? `${Math.round(report.resaleValue2Years / report.offeredPrice * 100)}%` : ""}
-                </p>
-              </div>
-            </div>
-
-            {/* Resale insight */}
-            {bilingual(report.resaleInsight) && (
-              <div className="rounded-lg bg-cyan-500/10 border border-cyan-500/20 p-3">
-                <p className="text-xs text-cyan-200 leading-relaxed">{bilingual(report.resaleInsight)}</p>
-              </div>
-            )}
-
-            {/* Cost of ownership */}
-            {report.resaleValue2Years && (
-              <div className="mt-3 rounded-lg bg-zinc-800/30 p-3">
-                <p className="text-xs text-zinc-400 mb-1">
-                  {lang === "ar" ? "التكلفة الفعلية بعد سنتين:" : "Actual cost after 2 years:"}
-                </p>
-                <p className="text-lg font-bold text-amber-400">
-                  {fmtPrice(report.offeredPrice - report.resaleValue2Years)} {cShort}
-                </p>
-                <p className="text-[10px] text-zinc-500">
-                  {lang === "ar" ? "(شريت بسعر كذا - بعت بسعر كذا = التكلفة الفعلية)" : "(Purchase price - Resale price = Your actual cost)"}
-                </p>
-              </div>
-            )}
-          </div>
-
-
-        </>
-      )}
 
       {/* Future Value Card - Premium */}
       {report.resaleValue2Years && (
@@ -452,7 +404,7 @@ export function ReportScreen() {
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         {dir === "rtl" ? (
           <>
-            <div className="rounded-xl border border-red-500/15 bg-zinc-900/60 p-5">
+            <div className="card-hover rounded-xl border border-red-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-red-400">
                 <X className="h-4 w-4" /> {t("cons")}
               </h3>
@@ -465,7 +417,7 @@ export function ReportScreen() {
               </ul>
               {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
-            <div className="rounded-xl border border-emerald-500/15 bg-zinc-900/60 p-5">
+            <div className="card-hover rounded-xl border border-emerald-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
                 <Check className="h-4 w-4" /> {t("pros")}
               </h3>
@@ -481,7 +433,7 @@ export function ReportScreen() {
           </>
         ) : (
           <>
-            <div className="rounded-xl border border-emerald-500/15 bg-zinc-900/60 p-5">
+            <div className="card-hover rounded-xl border border-emerald-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
                 <Check className="h-4 w-4" /> {t("pros")}
               </h3>
@@ -494,7 +446,7 @@ export function ReportScreen() {
               </ul>
               {isPremium && <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500"><Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}</p>}
             </div>
-            <div className="rounded-xl border border-red-500/15 bg-zinc-900/60 p-5">
+            <div className="card-hover rounded-xl border border-red-500/15 bg-zinc-900/60 p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-red-400">
                 <X className="h-4 w-4" /> {t("cons")}
               </h3>
@@ -516,261 +468,152 @@ export function ReportScreen() {
         <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
           <Compass className="h-5 w-5" /> {t("betterAlternatives")}
         </h2>
-        <div className="space-y-3">
-          {(report.betterAlternatives ?? []).map((alt, i) => {
-            const AltIcon = getCategoryIcon(alt?.name ?? "");
-            return (
-              <div key={i} className="flex items-start gap-3 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4">
-                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-zinc-800 via-zinc-900 to-black shadow-md ring-1 ring-amber-500/20">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/10 via-transparent to-transparent" />
-                  <AltIcon className="relative h-7 w-7 text-amber-400/90" strokeWidth={1.5} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="truncate text-sm font-bold text-zinc-100">{alt?.name ?? naLabel}</h3>
-                    <span className="shrink-0 rounded-lg bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-400">
-                      {fmtPrice(alt?.estimatedPrice)} {cShort}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-400">{bilingual(alt?.reason)}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{bilingual(alt?.whySuitable)}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Compare with another product */}
-        <div className="mt-3">
-          {!showCompareInput ? (
-            <Button
-              onClick={() => setShowCompareInput(true)}
-              variant="outline"
-              className="w-full border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
-            >
-              <GitCompare className="h-4 w-4" /> {lang === "ar" ? "قارن بمنتج آخر" : "Compare with another product"}
-              {!isPremium && <Crown className="ml-1 h-3 w-3" />}
-            </Button>
-          ) : (
-            <div className="rounded-xl border border-amber-500/20 bg-zinc-900/60 p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-amber-400">
-                <GitCompare className="h-4 w-4" /> {lang === "ar" ? "قارن بمنتج آخر" : "Compare with another product"}
-              </h3>
-              <div className="flex gap-2">
-                <Input
-                  value={compareProduct}
-                  onChange={(e) => setCompareProduct(e.target.value)}
-                  placeholder={t("productNamePlaceholder")}
-                  className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
-                />
-                <Button onClick={handleCompare} className="bg-amber-500 text-[#0B0B0F] hover:bg-amber-400">
-                  <GitCompare className="h-4 w-4" /> {t("compareNow")}
-                </Button>
-              </div>
-              <button onClick={() => setShowCompareInput(false)} className="mt-2 text-xs text-zinc-500 hover:text-zinc-300">
-                {lang === "ar" ? "إلغاء" : "Cancel"}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {bilingualArr(report.betterAlternatives).map((alt, i) => (
+            <div key={i} className="card-hover flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 transition-colors hover:border-amber-500/30">
+              <span className="text-sm font-medium text-zinc-100">{alt}</span>
+              <button
+                onClick={() => {
+                  if (!isPremium) { navigate("upgrade"); return; }
+                  setCompareProduct(alt);
+                  setShowCompareInput(true);
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-[#0B0B0F]"
+              >
+                <GitCompare className="h-4 w-4" />
               </button>
             </div>
-          )}
+          ))}
         </div>
       </div>
 
       {/* Negotiation Script */}
       <div className="mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
-        <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
-          <MessageCircle className="h-5 w-5" /> {t("negotiationScript")}
-        </h2>
-        {isPremium && (
-          <div className="mb-3 flex gap-2">
-            {(["polite", "firm"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setNegVariant(v)}
-                className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
-                  negVariant === v ? "bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30" : "bg-zinc-800/50 text-zinc-400"
-                }`}
-              >
-                {t(v)}
-              </button>
-            ))}
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
+            <MessageCircle className="h-5 w-5" /> {t("negotiationScript")}
+          </h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setNegVariant("polite")}
+              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${negVariant === "polite" ? "bg-amber-500 text-[#0B0B0F]" : "bg-zinc-800 text-zinc-400"}`}
+            >
+              {lang === "ar" ? "هادي" : "Polite"}
+            </button>
+            <button
+              onClick={() => setNegVariant("firm")}
+              className={`rounded-lg px-3 py-1 text-xs font-medium transition-colors ${negVariant === "firm" ? "bg-amber-500 text-[#0B0B0F]" : "bg-zinc-800 text-zinc-400"}`}
+            >
+              {lang === "ar" ? "حازم" : "Firm"}
+            </button>
           </div>
-        )}
-        <div className="rounded-xl bg-zinc-800/40 p-4">
-          <p className="text-sm leading-relaxed text-zinc-200">{bilingual(report.negotiationScript)}</p>
         </div>
-        <div className="mt-3 flex gap-2">
-          <Button onClick={handleCopyNegotiation} variant="outline" className="flex-1 border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400">
-            <Copy className="h-4 w-4" /> {t("copy")}
-          </Button>
-          <Button onClick={handleWhatsAppShare} className="flex-1 bg-emerald-600 text-white hover:bg-emerald-500">
-            <Share2 className="h-4 w-4" /> {t("shareWhatsApp")}
-          </Button>
-        </div>
-      </div>
-
-      {/* Hidden Risks */}
-      <div className="mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
-        <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
-          <Shield className="h-5 w-5" /> {t("hiddenRisks")}
-        </h2>
-        <ul className="space-y-2">
-          {bilingualArr(report.hiddenRisks).map((risk, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-zinc-300">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-              {risk}
-            </li>
-          ))}
-        </ul>
-        {isPremium && (
-          <p className="mt-3 flex items-center gap-1 text-xs text-zinc-500">
-            <Sparkles className="h-3 w-3" /> {t("expandedAnalysis")}
+        <div className="relative rounded-xl bg-zinc-950/50 p-4 pt-10">
+          <div className="absolute top-3 flex gap-2 right-3">
+            <button onClick={handleCopyNegotiation} className="text-zinc-500 hover:text-amber-400"><Copy className="h-4 w-4" /></button>
+            <button onClick={handleWhatsAppShare} className="text-zinc-500 hover:text-emerald-400"><Share2 className="h-4 w-4" /></button>
+          </div>
+          <p className="text-sm italic leading-relaxed text-zinc-300">
+            "{negVariant === "polite" ? bilingual(report.negotiationScript) : bilingual(report.negotiationScriptFirm)}"
           </p>
-        )}
-      </div>
-
-      {/* Final Tip */}
-      <div className="mb-4 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-transparent p-6 text-center shadow-lg shadow-amber-500/5">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15">
-          <Lightbulb className="h-6 w-6 text-amber-400" />
         </div>
-        <p className="font-serif text-base leading-relaxed text-amber-100">{bilingual(report.finalTip)}</p>
       </div>
 
-      {/* Feedback */}
-      <div className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 text-center">
-        <p className="mb-3 text-sm text-zinc-400">{t("feedbackQuestion")}</p>
-        {feedbackGiven ? (
-          <p className="text-sm font-medium text-amber-400">{t("thanksFeedback")}</p>
-        ) : (
-          <div className="flex items-center justify-center gap-4">
-            <button onClick={() => handleFeedback("up")} className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 transition-colors hover:bg-emerald-500/15 hover:text-emerald-400">
-              <ThumbsUp className="h-5 w-5" />
-            </button>
-            <button onClick={() => handleFeedback("down")} className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 transition-colors hover:bg-red-500/15 hover:text-red-400">
-              <ThumbsDown className="h-5 w-5" />
-            </button>
-          </div>
-        )}
-        {showFeedbackBox && !feedbackGiven && (
-          <div className="mt-3 space-y-2">
-            <textarea
-              value={feedbackText}
-              onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder={t("tellUsWhy")}
-              className="min-h-[60px] w-full rounded-lg border border-zinc-700 bg-zinc-800/50 p-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
-            />
-            <Button onClick={submitFeedback} className="w-full bg-amber-500 text-[#0B0B0F] hover:bg-amber-400">
-              {t("submitFeedback")}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Footer Actions */}
+      {/* Action Buttons */}
       <div className="grid grid-cols-2 gap-3">
-        <Button onClick={handleSave} disabled={isSaved} className="bg-amber-500 text-[#0B0B0F] hover:bg-amber-400 disabled:opacity-50">
-          <Bookmark className="h-4 w-4" /> {isSaved ? "✓ " + t("saveToHistory") : t("saveToHistory")}
-        </Button>
-        <Button onClick={handleShare} variant="outline" className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400">
-          <Share2 className="h-4 w-4" /> {t("shareReport")}
-        </Button>
-        <Button onClick={() => navigate("input")} variant="outline" className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400">
-          <Sparkles className="h-4 w-4" /> {t("newDecision")}
+        <Button
+          onClick={handleSave}
+          variant="outline"
+          disabled={isSaved}
+          className="border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
+        >
+          {isSaved ? <><Check className="h-4 w-4" /> {t("saved")}</> : <><Bookmark className="h-4 w-4" /> {t("saveToHistory")}</>}
         </Button>
         <Button
-          onClick={() => {
-            requireAuth(async () => {
-              await supabase.from("watchlist").insert({
-                user_id: (await supabase.auth.getUser()).data.user?.id,
-                product: report.product,
-                saved_price: report.offeredPrice,
-                currency: report.currency,
-              });
-              showToast(t("notifyPriceDrop") + " ✓");
-            });
-          }}
+          onClick={handleShare}
           variant="outline"
-          className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
+          className="border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
         >
-          <Bell className="h-4 w-4" /> {t("notifyPriceDrop")}
+          <Share2 className="h-4 w-4" /> {t("shareReport")}
         </Button>
       </div>
 
-      {/* Floating Chat Bubble */}
-      <button
-        onClick={() => setShowChat(!showChat)}
-        className={`fixed bottom-6 ${dir === "rtl" ? "left-4" : "right-4"} z-50 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-amber-600 text-[#0B0B0F] shadow-xl shadow-amber-500/30 transition-transform hover:scale-105`}
-      >
-        <MessageCircle className="h-5 w-5" />
-      </button>
+      {/* AI Advisor Chat Toggle */}
+      <div className="mt-8 flex flex-col items-center">
+        <p className="mb-3 text-xs text-zinc-500">{t("chatAdvisorPromo")}</p>
+        <Button
+          onClick={() => setShowChat(true)}
+          className="cta-glow rounded-full bg-gradient-to-r from-amber-400 to-amber-600 px-8 py-6 text-[#0B0B0F] font-bold shadow-xl shadow-amber-500/20 hover:scale-105 transition-transform"
+        >
+          <Bot className="h-5 w-5" /> {t("chatWithAdvisor")}
+        </Button>
+      </div>
 
-      {/* Chat Panel */}
+      {/* Floating Chat Modal */}
       {showChat && (
-        <div className={`fixed bottom-20 ${dir === "rtl" ? "left-4" : "right-4"} z-50 flex h-80 w-80 flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-[#0B0B0F] shadow-2xl`}>
-          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-4 py-2.5">
-            <span className="flex items-center gap-2 text-sm font-bold text-amber-400">
-              <MessageCircle className="h-4 w-4" /> {t("askAssistant")}
-            </span>
-            <div className="flex items-center gap-2">
-              {!isExample && (
-                <span className="text-[10px] text-zinc-500">
-                  {isPremium ? t("chatUnlimitedBadge") : t("chatQuestionsLeft").replace("{n}", String(chatRemaining))}
-                </span>
-              )}
-              <button onClick={() => setShowChat(false)} className="text-zinc-500 hover:text-zinc-300">
-                <X className="h-4 w-4" />
-              </button>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
+          <div className="flex h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-amber-500/20 bg-zinc-900 shadow-2xl slide-up">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-black shadow-lg shadow-amber-500/20">
+                  <Bot className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100">{t("chatWithAdvisor")}</h3>
+                  <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {lang === "ar" ? "مساعدك الشخصي متصل" : "Your AI Advisor is online"}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowChat(false)} className="rounded-full p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-100"><X className="h-5 w-5" /></button>
             </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {chatMessages.length === 0 ? (
-              <p className="text-center text-xs text-zinc-500 mt-8">{t("askAssistantHint")}</p>
-            ) : (
-              chatMessages.map((msg, i) => (
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+              {chatMessages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center opacity-50">
+                  <Brain className="h-12 w-12 text-zinc-700 mb-2" />
+                  <p className="text-xs text-zinc-500">{lang === "ar" ? "اسألني أي حاجة عن المنتج ده..." : "Ask me anything about this product..."}</p>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[80%] rounded-lg px-3 py-2 text-xs ${
-                    msg.role === "user" ? "bg-amber-500/20 text-amber-100" : "bg-zinc-800 text-zinc-300"
-                  }`}>
-                    {msg.content}
+                  <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-amber-500 text-[#0B0B0F] font-medium rounded-tr-none" : "bg-zinc-800 text-zinc-100 rounded-tl-none border border-zinc-700"}`}>
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
                   </div>
                 </div>
-              ))
-            )}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-400">{t("chatThinking")}</div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-zinc-800 rounded-2xl rounded-tl-none px-4 py-2.5 flex gap-1">
+                    <div className="h-1.5 w-1.5 bg-amber-400 rounded-full animate-bounce" />
+                    <div className="h-1.5 w-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <div className="h-1.5 w-1.5 bg-amber-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-zinc-900/50 border-t border-zinc-800">
+              <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-800 p-1.5 focus-within:border-amber-500/50 transition-colors">
+                <Input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                  placeholder={t("chatInputPlaceholder")}
+                  className="border-none bg-transparent text-sm focus-visible:ring-0"
+                />
+                <button onClick={toggleListening} className={`p-2 rounded-xl transition-colors ${listening ? "bg-red-500 text-white animate-pulse" : "text-zinc-500 hover:text-amber-400"}`}><Mic className="h-5 w-5" /></button>
+                <button onClick={sendChat} disabled={!chatInput.trim() || chatLoading} className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-black hover:bg-amber-300 disabled:opacity-40"><Send className="h-5 w-5" /></button>
               </div>
-            )}
-          </div>
-          <div className="border-t border-zinc-800 bg-zinc-900/50 p-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendChat()}
-                placeholder={t("typeMessage")}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
-              />
-              <button
-                onClick={toggleListening}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-50 ${
-                  listening ? "bg-red-500/20 text-red-400 animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-amber-500/15"
-                }`}
-                title={t("voiceInput")}
-              >
-                <Mic className="h-4 w-4" />
-              </button>
-              <button
-                onClick={sendChat}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-[#0B0B0F] hover:bg-amber-400 disabled:opacity-50"
-                title={t("send")}
-              >
-                <Send className="h-4 w-4" />
-              </button>
+              <div className="mt-2 flex items-center justify-between px-1">
+                {!isPremium && (
+                  <p className={`text-[10px] font-bold ${chatRemaining <= 3 ? 'text-red-400' : 'text-zinc-500'}`}>
+                    {lang === "ar" ? `باقي ${chatRemaining} رسائل` : `${chatRemaining} messages left`}
+                  </p>
+                )}
+                {isPremium && <p className="text-[10px] text-amber-400 font-bold flex items-center gap-1"><Crown className="h-3 w-3" /> Premium Advisor</p>}
+              </div>
             </div>
           </div>
         </div>
