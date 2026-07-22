@@ -25,14 +25,7 @@ export function FutureValueCard({
         {lang === "ar" ? "خلاصة خسارة القيمة وتكلفة الامتلاك" : "Cost of Ownership Summary"}
       </h2>
 
-      {/* Depreciation Summary */}
-      <div className="mb-4 rounded-lg bg-zinc-800/40 p-4 border border-zinc-700/50">
-        <p className="text-sm text-zinc-300 leading-relaxed">
-          {lang === "ar"
-            ? `الجهاز ده بيفقد تقريباً ${resaleDepreciationRate || "30%"} من قيمته كل سنة؛ يعني استثمارك فيه بيقل للنص بعد سنتين تقريباً.`
-            : `This device loses approximately ${resaleDepreciationRate || "30%"} of its value each year; meaning your investment is cut in half after about two years.`}
-        </p>
-      </div>
+
 
       {/* Smart Advice */}
       <div className="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/20 p-4">

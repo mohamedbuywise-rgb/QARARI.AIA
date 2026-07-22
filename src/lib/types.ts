@@ -72,15 +72,10 @@ export interface AnalysisResult {
     analyzedCount: number;
     recentPrices: number[];
   } | null;
-  // Resale Value Prediction
-  resaleValueRightNow?: number;
-  resaleValue1Year?: number;
-  resaleValue2Years?: number;
-  resaleDepreciationRate?: string;
+  // Resale Value Prediction (2-year outlook only)
+  resaleValueRightNow?: number | null;
+  resaleValue2Years?: number | null;
   resaleInsight?: BilingualText;
-  // Trade-in Calculator
-  tradeInValue?: number;
-  tradeInPlatformLinks?: { name: string; url: string; estimatedPrice: number }[];
   createdAt: number;
 }
 

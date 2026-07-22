@@ -388,10 +388,10 @@ export function ReportScreen() {
               <TrendingDown className="h-5 w-5" /> {lang === "ar" ? "قيمة المنتج بعد سنة" : "Resale Value Prediction"}
             </h2>
 
-            {/* Current price vs resale value timeline */}
-            <div className="grid grid-cols-3 gap-3 mb-4">
+            {/* Current price vs resale value after 2 years */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
-                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "القيمة دلوقتي" : "Now"}</p>
+                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "القيمة دلوقتي" : "Current Value"}</p>
                 <p className="text-sm font-bold text-cyan-300">
                   {report.resaleValueRightNow ? `${fmtPrice(report.resaleValueRightNow)} ${cShort}` : naLabel}
                 </p>
@@ -400,16 +400,7 @@ export function ReportScreen() {
                 </p>
               </div>
               <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
-                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنة" : "1 Year"}</p>
-                <p className="text-sm font-bold text-amber-300">
-                  {report.resaleValue1Year ? `${fmtPrice(report.resaleValue1Year)} ${cShort}` : naLabel}
-                </p>
-                <p className="text-[10px] text-zinc-500">
-                  {report.resaleValue1Year ? `${Math.round(report.resaleValue1Year / report.offeredPrice * 100)}%` : ""}
-                </p>
-              </div>
-              <div className="rounded-lg bg-zinc-800/60 p-3 text-center">
-                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنتين" : "2 Years"}</p>
+                <p className="text-[10px] text-zinc-500 mb-1">{lang === "ar" ? "بعد سنتين" : "After 2 Years"}</p>
                 <p className="text-sm font-bold text-red-300">
                   {report.resaleValue2Years ? `${fmtPrice(report.resaleValue2Years)} ${cShort}` : naLabel}
                 </p>
@@ -418,32 +409,6 @@ export function ReportScreen() {
                 </p>
               </div>
             </div>
-
-            {/* Visual depreciation bar */}
-            {report.resaleValueRightNow && report.resaleValue2Years && (
-              <div className="mb-4">
-                <div className="h-3 rounded-full bg-zinc-800 overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-amber-400 to-red-400 transition-all" style={{ width: "100%" }} />
-                </div>
-                <div className="flex justify-between mt-1">
-                  <span className="text-[10px] text-cyan-400">{Math.round(report.resaleValueRightNow / report.offeredPrice * 100)}%</span>
-                  <span className="text-[10px] text-amber-400">{Math.round(report.resaleValue1Year! / report.offeredPrice * 100)}%</span>
-                  <span className="text-[10px] text-red-400">{Math.round(report.resaleValue2Years! / report.offeredPrice * 100)}%</span>
-                </div>
-              </div>
-            )}
-
-            {/* Depreciation rate */}
-            {report.resaleDepreciationRate && (
-              <div className="mb-3 flex items-center gap-2 rounded-lg bg-zinc-800/40 px-3 py-2">
-                <TrendingDown className="h-4 w-4 text-red-400" />
-                <p className="text-xs text-zinc-300">
-                  {lang === "ar"
-                    ? `معدل الانخفاض: ${report.resaleDepreciationRate}`
-                    : `Depreciation rate: ${report.resaleDepreciationRate}`}
-                </p>
-              </div>
-            )}
 
             {/* Resale insight */}
             {bilingual(report.resaleInsight) && (
