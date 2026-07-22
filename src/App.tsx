@@ -10,19 +10,11 @@ import { UpgradeScreen } from "@/components/UpgradeScreen";
 import { CompareScreen } from "@/components/CompareScreen";
 import { GuideScreen } from "@/components/GuideScreen";
 import { AdvisorScreen } from "@/components/AdvisorScreen";
-import { SplashScreen } from "@/components/SplashScreen";
-import { FloatingParticles } from "@/components/FloatingParticles";
-import { AmbientOrbs } from "@/components/AmbientOrbs";
 
 import { useApp } from "@/lib/AppContext";
 
 function ScreenRouter() {
-  const { screen, showSplash } = useApp();
-  
-  if (showSplash) {
-    return <SplashScreen />;
-  }
-
+  const { screen } = useApp();
   switch (screen) {
     case "input":
       return <DecisionInput />;
@@ -51,16 +43,11 @@ function ScreenRouter() {
 export default function App() {
   return (
     <AppProvider>
-      <div className="min-h-screen bg-[#0B0B0F] text-zinc-100 antialiased overflow-x-hidden">
-        {/* Animated Background Elements */}
-        <AmbientOrbs />
-        <FloatingParticles count={25} />
-        
+      <div className="min-h-screen bg-[#0B0B0F] text-zinc-100 antialiased">
         <div className="pointer-events-none fixed inset-0 z-0 bg-gradient-to-b from-amber-950/10 via-transparent to-transparent" />
-        
-        <div className="relative z-10 flex flex-col min-h-screen">
+        <div className="relative z-10">
           <Header />
-          <main className="flex-1 pb-8">
+          <main className="pb-8">
             <ScreenRouter />
           </main>
           <footer className="border-t border-amber-500/10 px-4 py-6 text-center">

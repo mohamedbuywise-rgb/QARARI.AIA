@@ -65,11 +65,11 @@ export function HistoryScreen() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 slide-up">
+    <div className="mx-auto max-w-3xl px-4 py-6">
       <div className="mb-6 flex items-center gap-3">
         <button
           onClick={() => navigate("input")}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/50 text-zinc-400 transition-all hover:text-amber-400 hover:scale-110"
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/50 text-zinc-400 transition-colors hover:text-amber-400"
         >
           {dir === "rtl" ? <ChevronLeft className="h-5 w-5 rotate-180" /> : <ChevronLeft className="h-5 w-5" />}
         </button>
@@ -78,22 +78,22 @@ export function HistoryScreen() {
 
       {/* Stats Row */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="card-hover rounded-xl border border-amber-500/15 bg-gradient-to-b from-amber-500/10 to-transparent p-4 text-center">
+        <div className="rounded-xl border border-amber-500/15 bg-gradient-to-b from-amber-500/10 to-transparent p-4 text-center">
           <TrendingUp className="mx-auto mb-1 h-5 w-5 text-amber-400" />
           <p className="text-lg font-bold text-amber-400">{stats.totalSaved.toLocaleString()}</p>
           <p className="text-xs text-zinc-500">{t("totalSaved")}</p>
         </div>
-        <div className="card-hover rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
           <Calendar className="mx-auto mb-1 h-5 w-5 text-zinc-400" />
           <p className="text-lg font-bold text-zinc-100">{stats.thisMonthCount}</p>
           <p className="text-xs text-zinc-500">{t("decisionsThisMonth")}</p>
         </div>
-        <div className="card-hover rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
           <TrendingUp className="mx-auto mb-1 h-5 w-5 text-emerald-400" />
           <p className="text-lg font-bold text-emerald-400">{stats.goodDeals}</p>
           <p className="text-xs text-zinc-500">{t("goodDeals")}</p>
         </div>
-        <div className="card-hover rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-center">
           <Flame className="mx-auto mb-1 h-5 w-5 text-amber-400" />
           <p className="text-lg font-bold text-amber-400">{stats.streak}</p>
           <p className="text-xs text-zinc-500">{t("dayStreak")}</p>
@@ -108,7 +108,7 @@ export function HistoryScreen() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("searchHistory")}
-            className={`border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 transition-all ${dir === "rtl" ? "pr-10" : "pl-10"}`}
+            className={`border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 ${dir === "rtl" ? "pr-10" : "pl-10"}`}
           />
         </div>
         <div className="flex gap-2">
@@ -116,8 +116,8 @@ export function HistoryScreen() {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
-                filter === f ? "bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30" : "bg-zinc-800/50 text-zinc-400 hover:text-amber-400 hover:bg-zinc-800"
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                filter === f ? "bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30" : "bg-zinc-800/50 text-zinc-400 hover:text-amber-400"
               }`}
             >
               {t(f)}
@@ -132,7 +132,7 @@ export function HistoryScreen() {
           <Package className="mb-3 h-12 w-12 text-zinc-700" />
           <p className="text-sm font-medium text-zinc-400">{t("noHistory")}</p>
           <p className="mt-1 text-xs text-zinc-600">{t("noHistoryDesc")}</p>
-          <Button onClick={() => navigate("input")} className="mt-4 bg-amber-500 text-[#0B0B0F] hover:bg-amber-400 shadow-lg shadow-amber-500/20">
+          <Button onClick={() => navigate("input")} className="mt-4 bg-amber-500 text-[#0B0B0F] hover:bg-amber-400">
             {t("newDecision")}
           </Button>
         </div>
@@ -145,7 +145,7 @@ export function HistoryScreen() {
               <button
                 key={h.id}
                 onClick={() => openReport(h.id)}
-                className="card-hover flex w-full items-center gap-3 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4 text-left transition-all hover:border-amber-500/30 hover:bg-zinc-800/50"
+                className="flex w-full items-center gap-3 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-4 text-left transition-colors hover:border-amber-500/30 hover:bg-zinc-800/50"
               >
                 <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-zinc-800 via-zinc-900 to-black shadow-md ring-1 ring-amber-500/20">
                   <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/10 via-transparent to-transparent" />
@@ -158,7 +158,7 @@ export function HistoryScreen() {
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1">
-                  <span className={`verdict-pop rounded-lg border px-2 py-0.5 text-xs font-medium ${verdictColor[h.verdict] ?? verdictColor.fair}`}>
+                  <span className={`rounded-lg border px-2 py-0.5 text-xs font-medium ${verdictColor[h.verdict] ?? verdictColor.fair}`}>
                     {t(h.verdict === "good" ? "goodDeal" : h.verdict === "fair" ? "fairDeal" : "badDeal")}
                   </span>
                   {typeof h.moneySaved === "number" && h.moneySaved > 0 && (

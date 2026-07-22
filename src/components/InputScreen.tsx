@@ -8,11 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { TypingText } from "@/components/TypingText";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Zap, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
+import { Sparkles, Camera, Upload, X, Crown, GitCompare, MessageCircle, Brain, RefreshCw } from "lucide-react";
 
 export function InputScreen() {
   const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory } = useApp();
@@ -33,8 +32,13 @@ export function InputScreen() {
 
   const Icon = useMemo(() => getCategoryIcon(product), [product]);
 
+  // Both Free and Premium now carry a monthly cap (Premium's is just much higher),
+  // so quota can be exceeded on either tier.
   const quotaExceeded = remaining !== null && remaining <= 0;
 
+  // Fetch the real remaining-scans count from the server on load and whenever
+  // premium status changes — never a locally-guessed number (fixes the
+  // negative-counter bug: this always reflects the server's floor-at-0 value).
   useEffect(() => {
     async function fetchRemaining() {
       try {
@@ -100,6 +104,7 @@ export function InputScreen() {
       });
 
       if (res.status === 403) {
+        // Section 14: hard server-side quota block — never runs the analysis
         setRemaining(0);
         navigate("upgrade");
         return;
@@ -111,6 +116,7 @@ export function InputScreen() {
       }
 
       const result = await res.json();
+      console.log("FULL AI RESPONSE:", result);
       setCurrentReport(result);
       setRemaining((r) => (r !== null ? Math.max(0, r - 1) : r));
       navigate("report");
@@ -127,28 +133,18 @@ export function InputScreen() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-6 slide-up">
+    <div className="mx-auto max-w-2xl px-4 py-6">
       {/* Hero */}
       <div className="mb-6 text-center">
-        <div className="relative mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/30">
-          <div className="absolute inset-0 animate-pulse rounded-2xl bg-amber-400/20 blur-lg" />
-          <Zap className="relative h-8 w-8 text-[#0B0B0F]" />
+        <div className="mb-3 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/20">
+          <Sparkles className="h-8 w-8 text-[#0B0B0F]" />
         </div>
         <h1 className="font-serif text-3xl font-bold text-amber-400">{t("appName")}</h1>
-        <div className="mt-1 h-5">
-          <TypingText
-            phrases={
-              lang === "ar"
-                ? ["حلل قرارك قبل ما تدفع 💸", "اعرف السعر العادل في السوق المصري 🇪🇬", "وفر فلوسك واشتري بذكاء 🧠"]
-                : ["Analyze before you pay 💸", "Know the fair market price 🇪🇬", "Save money, buy smart 🧠"]
-            }
-            className="text-sm text-zinc-400"
-          />
-        </div>
+        <p className="mt-1 text-sm text-zinc-400">{t("tagline")}</p>
       </div>
 
       {/* Form Card */}
-      <div className="card-hover rounded-2xl border border-amber-500/15 bg-gradient-to-b from-zinc-900/80 to-[#0B0B0F] p-6 shadow-2xl backdrop-blur-sm">
+      <div className="rounded-2xl border border-amber-500/15 bg-gradient-to-b from-zinc-900/80 to-[#0B0B0F] p-6 shadow-2xl">
         <div className="space-y-5">
           {/* Product Name with Live Icon */}
           <div className="space-y-1.5">
@@ -162,7 +158,7 @@ export function InputScreen() {
                 value={product}
                 onChange={(e) => setProduct(e.target.value)}
                 placeholder={t("productNamePlaceholder")}
-                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 transition-all"
+                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
               />
             </div>
           </div>
@@ -176,13 +172,13 @@ export function InputScreen() {
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="0"
-                className="border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 transition-all"
+                className="border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
               />
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-zinc-300">{t("currency")}</Label>
               <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50 transition-all">
+                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-zinc-700 bg-zinc-800 text-zinc-100">
@@ -196,12 +192,23 @@ export function InputScreen() {
             </div>
           </div>
 
+          {/* Notes */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-zinc-300">{t("notes")}</Label>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={t("notesPlaceholder")}
+              className="min-h-[60px] border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
+            />
+          </div>
+
           {/* Usage Profile */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-zinc-300">{t("purposeOfUse")}</Label>
               <Select value={purpose} onValueChange={setPurpose}>
-                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50 transition-all">
+                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-zinc-700 bg-zinc-800 text-zinc-100">
@@ -215,7 +222,7 @@ export function InputScreen() {
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-zinc-300">{t("expectedDuration")}</Label>
               <Select value={duration} onValueChange={setDuration}>
-                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50 transition-all">
+                <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-zinc-700 bg-zinc-800 text-zinc-100">
@@ -231,7 +238,7 @@ export function InputScreen() {
           <div className="space-y-1.5">
             <Label className="text-sm font-medium text-zinc-300">{t("productCondition")}</Label>
             <Select value={condition} onValueChange={setCondition}>
-              <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50 transition-all">
+              <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-zinc-100 focus:border-amber-500/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="border-zinc-700 bg-zinc-800 text-zinc-100">
@@ -242,7 +249,18 @@ export function InputScreen() {
             </Select>
           </div>
 
-          {/* Photo Upload */}
+          {/* Other Specs */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-zinc-300">{t("otherSpecs")}</Label>
+            <Input
+              value={product === "" ? "" : specs}
+              onChange={(e) => setSpecs(e.target.value)}
+              placeholder={lang === "ar" ? "اللون، السعة، المميزات..." : "Color, storage, features..."}
+              className="border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
+            />
+          </div>
+
+          {/* Photo Upload - Available for ALL users */}
           <div className="space-y-2">
             <Label className="text-sm font-medium text-zinc-300">{t("uploadPhoto")}</Label>
             <div className="flex gap-2">
@@ -251,24 +269,24 @@ export function InputScreen() {
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 variant="outline"
-                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400 transition-all"
+                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
               >
                 <Upload className="h-4 w-4" /> {t("uploadPhoto")}
               </Button>
               <Button
                 onClick={() => cameraInputRef.current?.click()}
                 variant="outline"
-                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400 transition-all"
+                className="flex-1 border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
               >
                 <Camera className="h-4 w-4" /> {t("takePhoto")}
               </Button>
             </div>
             {photo && (
-              <div className="relative inline-block mt-2">
-                <img src={photo} alt="product" className="h-20 w-20 rounded-lg border border-amber-500/40 object-cover shadow-lg shadow-amber-500/10" />
+              <div className="relative inline-block">
+                <img src={photo} alt="product" className="h-20 w-20 rounded-lg border border-amber-500/20 object-cover" />
                 <button
                   onClick={() => setPhoto(null)}
-                  className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-lg hover:bg-red-600 transition-colors"
+                  className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-lg"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -278,12 +296,11 @@ export function InputScreen() {
           </div>
 
           {/* Scan Counter */}
-          <div className="text-center text-sm py-1">
+          <div className="text-center text-sm">
             {remaining === null ? (
-              <span className="text-zinc-600 animate-pulse">…</span>
+              <span className="text-zinc-600">…</span>
             ) : (
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-xs font-bold ${isPremium ? "bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/20" : "bg-zinc-800 text-zinc-400"}`}>
-                {isPremium && <Crown className="h-3 w-3" />}
+              <span className={isPremium ? "font-bold text-amber-400" : "text-zinc-400"}>
                 {t("scansLeft", { remaining, max: maxScans })}
               </span>
             )}
@@ -293,42 +310,89 @@ export function InputScreen() {
           <Button
             onClick={handleSubmit}
             disabled={loading}
-            className={`cta-glow w-full bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500 disabled:opacity-50 h-12 text-lg shadow-xl shadow-amber-500/20 transition-all duration-300 ${loading ? 'scale-95' : 'hover:scale-[1.02]'}`}
+            className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500 disabled:opacity-50"
           >
             {loading ? (
               <span className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5 animate-spin" />
-                {lang === "ar" ? "جاري تحليل القرار..." : "Analyzing Decision..."}
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0B0B0F] border-t-transparent" />
+                {lang === "ar" ? "جاري التحليل..." : "Analyzing..."}
               </span>
+            ) : quotaExceeded ? (
+              <><Crown className="h-4 w-4" /> {t("upgrade")}</>
             ) : (
-              <span className="flex items-center gap-2">
-                <Brain className="h-5 w-5" />
-                {t("analyzeButton")}
-              </span>
+              <><Sparkles className="h-4 w-4" /> {t("analyzeDecision")}</>
             )}
           </Button>
 
-          {!isPremium && (
-            <button
-              onClick={() => navigate("upgrade")}
-              className="group flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 py-3 text-sm font-bold text-amber-400 transition-all hover:bg-amber-500/10"
+          {/* Compare Button */}
+          <Button
+            onClick={() => navigate("compare")}
+            variant="outline"
+            className="w-full border-amber-500/30 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
+          >
+            <GitCompare className="h-4 w-4" /> {t("compareProducts")}
+            {!isPremium && <Crown className="ml-1 h-3 w-3" />}
+          </Button>
+
+          {/* Smart Advisor Card - Premium */}
+          <div className="mt-6 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-amber-600/5 to-transparent p-5 shadow-lg shadow-amber-500/5">
+            <div className="flex items-start gap-4">
+              <div className="relative">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 shadow-lg shadow-amber-500/20">
+                  <Brain className="h-6 w-6 text-black" />
+                </div>
+                <div className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 shadow-lg" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wide">
+                  {lang === "ar" ? "مستشار الشراء الذكي" : "Smart Shopping Advisor"}
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {lang === "ar"
+                    ? "اسألني أي سؤال عن الشراء أو المقارنة.. وموجود لمساعدتك في أي وقت دون تعقيد."
+                    : "Ask me anything about shopping or comparison.. I'm here to help anytime without complexity."}
+                </p>
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-zinc-800/50 px-3 py-2">
+                  <MessageCircle className="h-3.5 w-3.5 text-amber-400" />
+                  <span className="text-[10px] text-zinc-500 italic">
+                    {lang === "ar"
+                      ? "مثال: معايا 30 ألف وعايز لابتوب للدراسة..."
+                      : "Example: I have 30K EGP and need a laptop for studying..."}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <Button
+              onClick={() => {
+                if (!session?.user) {
+                  showToast(
+                    lang === "ar"
+                      ? "عشان أقدر أفتكر اهتماماتك وأقدملك نصائح مخصصة ليك، ياريت تسجل دخولك"
+                      : "To remember your interests and provide personalized advice, please sign in"
+                  );
+                  navigate("login");
+                  return;
+                }
+                navigate("advisor");
+              }}
+              className="mt-4 w-full bg-gradient-to-r from-amber-400 to-amber-600 text-black font-bold hover:from-amber-300 hover:to-amber-500 shadow-lg shadow-amber-500/20"
             >
-              <Crown className="h-4 w-4 transition-transform group-hover:rotate-12" />
-              {lang === "ar" ? "احصل على تحليلات غير محدودة" : "Get Unlimited Analytics"}
+              <MessageCircle className="h-4 w-4" /> {lang === "ar" ? "ابدأ المحادثة مع المستشار" : "Start conversation with advisor"}
+            </Button>
+          </div>
+
+
+
+          {/* Demo Report */}
+          {history.length === 0 && (
+            <button
+              onClick={handleDemo}
+              className="w-full text-center text-xs text-zinc-500 underline hover:text-amber-400 mt-3"
+            >
+              {lang === "ar" ? "شوف مثال لتحليل توضيحي" : "See an example analysis"}
             </button>
           )}
         </div>
-      </div>
-
-      {/* Demo Section */}
-      <div className="mt-8 text-center">
-        <p className="text-xs text-zinc-500 mb-3">{lang === "ar" ? "مش متأكد؟ جرب التقرير الديمو" : "Not sure? Try a demo report"}</p>
-        <button
-          onClick={handleDemo}
-          className="inline-flex items-center gap-2 rounded-full bg-zinc-800/50 px-4 py-2 text-xs font-medium text-zinc-400 transition-all hover:bg-zinc-800 hover:text-amber-400"
-        >
-          <RefreshCw className="h-3 w-3" /> {t("tryDemo")}
-        </button>
       </div>
     </div>
   );

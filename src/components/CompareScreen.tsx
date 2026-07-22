@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { GitCompare, ChevronLeft, Crown, Check, Zap } from "lucide-react";
+import { GitCompare, ChevronLeft, Crown, Check, Sparkles } from "lucide-react";
 
 export function CompareScreen() {
   const { t, lang, dir, navigate, currentCompare, setCurrentCompare, isPremium, currentReport, showToast, session } = useApp();
@@ -209,7 +209,7 @@ export function CompareScreen() {
         {/* Final Recommendation */}
         <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-transparent p-6 text-center shadow-lg">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15">
-            <Zap className="h-6 w-6 text-amber-400" />
+            <Sparkles className="h-6 w-6 text-amber-400" />
           </div>
           <h3 className="mb-2 font-serif text-lg font-bold text-amber-400">{t("finalRecommendation")}</h3>
           <p className="text-sm leading-relaxed text-amber-100">{bilingual(currentCompare.finalRecommendation)}</p>
