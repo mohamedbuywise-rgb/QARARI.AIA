@@ -126,7 +126,7 @@ export function UpgradeScreen() {
                   <Check className="h-3 w-3 text-emerald-400" />
                 </span>
                 <p className="text-sm text-zinc-300">
-                  {lang === "ar" ? "💬 رسائل شات غير محدودة مع المساعد الشخصي" : "💬 Unlimited chat with personal advisor"}
+                  {lang === "ar" ? "💬 150 رسالة شات شهريًا مع المساعد الشخصي" : "💬 150 chat messages/month with personal advisor"}
                 </p>
               </div>
               <div className="flex items-center gap-2.5 mt-2">

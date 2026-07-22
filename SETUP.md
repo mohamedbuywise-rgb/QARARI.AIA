@@ -11,6 +11,8 @@
 - Real "Notify me if price drops" — saves a real row to the `watchlist` table, and is now actually checked daily (see below).
 - **Admin Dashboard UI** — a real screen at `/admin`, gated by your admin username/password, with three tabs: pending subscription requests (approve/reject with signed screenshot links), Business Metrics (Section 26), and AI Cost Dashboard (Section 25).
 - **Compare Products** — wired into the app for real: a "Compare" icon lives in the header, and the "Compare with another product" box on the Report screen now hands off into it. `/api/compare` calls Groq (with a Tavily web search) for a real researched comparison (Premium-gated server-side, not just in the UI).
+- **Premium chat cap (NEW)** — Premium used to have truly unlimited chat (Report-screen "Ask Assistant" + the open Shopping Advisor). Both now share a single **150 messages/month** cap, tracked on `users.premium_chat_used_this_month` (needs `supabase-premium-chat-limit-migration.sql`). Free/guest keep their existing separate caps (20/report, 20 advisor msgs/month) unchanged.
+- **Lower worst-case search cost per analysis (NEW)** — `/api/analyze` used to be able to fire up to 3 billed search calls (1 Tavily + up to 2 Serper/Tavily price-extraction attempts) in its worst case. The second "localized retry" attempt has been removed, so the ceiling per analysis is now 2 billed search calls, not 3 — if the first price attempt finds nothing, pricing falls back to the model's own knowledge instead of spending a 3rd call.
 - **Daily cron job** (`/api/cron/daily`, registered in `vercel.json`, runs once a day): auto-reverts expired Premium subscriptions to Free, proactively resets monthly scan counters, and checks the watchlist for real price drops (emailing users when a tracked product's price falls 5%+). Every run is logged to `cron_logs`.
 - **AI Cost Dashboard & Business Metrics Dashboard** (Sections 25-26) — live at `/admin`. Cost figures are ESTIMATED from a configurable pricing table in `api/_costTracking.ts` (update it to match Groq's and Tavily's current published pricing for accuracy) — actual billing always comes from Groq and Tavily, not Google.
 
@@ -24,6 +26,8 @@
 ### 1. Run the database schema
 Open your Supabase project → **SQL Editor** → paste the entire contents of `supabase-schema.sql` (included in this zip) → Run.
 This now also creates `ai_usage_log` and `cron_logs`, and adds a few columns to `watchlist` — safe to re-run even if you ran an earlier version of this file before (everything uses `if not exists` / `add column if not exists`).
+
+Then also run every other `supabase-*-migration.sql` file in this zip (each is independent and safe to re-run), including the new **`supabase-premium-chat-limit-migration.sql`** — this one adds `premium_chat_used_this_month` / `premium_chat_reset_at` to `users`, which `/api/ask.ts` now needs to enforce the 150 messages/month Premium chat cap (see CHANGES.md).
 
 ### 2. Create the Storage bucket
 The SQL script already creates the `screenshots` bucket and its access policies — no manual step needed, just make sure the SQL ran without errors.

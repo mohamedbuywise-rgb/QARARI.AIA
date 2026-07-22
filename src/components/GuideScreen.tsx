@@ -25,10 +25,10 @@ export function GuideScreen() {
       descEn: "Ask the advisor anything about shopping and get personalized advice",
     },
     {
-      titleAr: "💬 رسائل غير محدودة (بريميوم)",
-      titleEn: "💬 Unlimited Messages (Premium)",
-      descAr: "تحدث مع المساعد بدون حدود وهو يتذكر اهتماماتك",
-      descEn: "Chat unlimited with the advisor who remembers your interests",
+      titleAr: "💬 150 رسالة شهريًا (بريميوم)",
+      titleEn: "💬 150 Messages/Month (Premium)",
+      descAr: "تحدث مع المساعد وهو يتذكر اهتماماتك",
+      descEn: "Chat with the advisor who remembers your interests",
     },
     {
       titleAr: "🛡️ حماية من الاستغلال",
@@ -113,8 +113,8 @@ export function GuideScreen() {
               en: "✅ 10 comparisons per month (premium only)",
             },
             {
-              ar: "✅ رسائل شات غير محدودة مع المساعد الشخصي",
-              en: "✅ Unlimited chat messages with personal advisor",
+              ar: "✅ 150 رسالة شات شهريًا مع المساعد الشخصي",
+              en: "✅ 150 chat messages/month with personal advisor",
             },
             {
               ar: "✅ ذاكرة ذكية تتذكر اهتماماتك وتقدم نصائح مخصصة",

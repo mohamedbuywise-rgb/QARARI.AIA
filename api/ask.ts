@@ -4,16 +4,27 @@ import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
-// Hard cap on how many chat questions can be asked per analysis. Each
+// Hard cap on how many chat questions can be asked per analysis (Free/guest
+// tier only — Premium uses PREMIUM_CHAT_MONTHLY_LIMIT below instead). Each
 // question is a Groq call WITHOUT a Tavily search (unlike the main
 // analysis) — plain reasoning over the existing report context only —
 // so the per-message cost is low enough to allow a much higher cap.
 const MAX_CHAT_MESSAGES_PER_REPORT = 20;
 
-// Open shopping advisor mode (no report context required) — allows unlimited
-// free-form shopping questions. Premium users get unlimited queries; free users
-// are capped per month.
+// Open shopping advisor mode (no report context required), Free/guest tier
+// cap per month — Premium uses PREMIUM_CHAT_MONTHLY_LIMIT below instead.
 const MAX_ADVISOR_MESSAGES_PER_MONTH_FREE = 20;
+
+// Premium subscribers used to get truly unlimited chat (both "report" mode
+// and "advisor" mode combined) — since every message is still a real Groq
+// call, that left the AI Cost Dashboard with zero ceiling on a single
+// subscriber's cost. This is a fair-use cap in the same spirit as
+// COMPARE_MONTHLY_LIMIT in /api/compare.ts: generous enough that no normal
+// user will ever hit it, but it guarantees the worst case is bounded.
+// Tracked on users.premium_chat_used_this_month / premium_chat_reset_at
+// (see supabase-premium-chat-limit-migration.sql), shared across BOTH chat
+// modes so it can't be doubled up by mixing report-chat and advisor-chat.
+const PREMIUM_CHAT_MONTHLY_LIMIT = 150;
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -167,10 +178,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? `user:${user.id}`
       : `ip:${(req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown"}`;
 
-    let used = 0;
+    // Real tier, resolved BEFORE loading usage — Premium tracks a single
+    // shared monthly counter (PREMIUM_CHAT_MONTHLY_LIMIT, covering BOTH chat
+    // modes combined), while Free/guest keep their existing per-mode caps.
+    let tier: "free" | "premium" | "guest" = "guest";
+    if (user) {
+      const { data: userRow } = await admin
+        .from("users")
+        .select("tier, subscription_end_date")
+        .eq("id", user.id)
+        .single();
+      let effectiveTier = userRow?.tier || "free";
+      if (effectiveTier === "premium" && userRow?.subscription_end_date && new Date(userRow.subscription_end_date) < new Date()) {
+        effectiveTier = "free";
+        await admin.from("users").update({ tier: "free" }).eq("id", user.id);
+      }
+      tier = effectiveTier as "free" | "premium";
+    }
 
-    if (mode === "advisor") {
-      // Open advisor mode: track monthly usage per user/IP
+    const isPremiumTier = tier === "premium";
+    let used = 0;
+    let maxMessages = mode === "advisor" ? MAX_ADVISOR_MESSAGES_PER_MONTH_FREE : MAX_CHAT_MESSAGES_PER_REPORT;
+
+    if (isPremiumTier) {
+      // Premium: one shared 150/month counter across report-chat AND
+      // advisor-chat, stored on the users row (same reset pattern
+      // /api/compare.ts uses for compares_used_this_month).
+      maxMessages = PREMIUM_CHAT_MONTHLY_LIMIT;
+      console.log("[/api/ask] Loading premium chat usage for user:", user!.id);
+      const { data: premiumRow } = await admin
+        .from("users")
+        .select("premium_chat_used_this_month, premium_chat_reset_at")
+        .eq("id", user!.id)
+        .single();
+
+      const now = new Date();
+      const resetAt = premiumRow?.premium_chat_reset_at ? new Date(premiumRow.premium_chat_reset_at) : null;
+      const needsReset = !resetAt || now.getUTCFullYear() !== resetAt.getUTCFullYear() || now.getUTCMonth() !== resetAt.getUTCMonth();
+
+      if (needsReset) {
+        used = 0;
+        await admin.from("users").update({ premium_chat_used_this_month: 0, premium_chat_reset_at: now.toISOString() }).eq("id", user!.id);
+      } else {
+        used = premiumRow?.premium_chat_used_this_month || 0;
+      }
+      console.log("[/api/ask] Premium chat usage loaded. used:", used, "| max:", maxMessages);
+    } else if (mode === "advisor") {
+      // Open advisor mode (Free/guest): track monthly usage per user/IP
       console.log("[/api/ask] Loading advisor usage for identity:", identity);
       const { data: advisorUsageRow } = await admin
         .from("advisor_usage")
@@ -195,7 +249,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       console.log("[/api/ask] Advisor usage loaded. used:", used);
     } else {
-      // Report mode: track per-report usage
+      // Report mode (Free/guest): track per-report usage
       console.log("[/api/ask] Loading chat usage for identity:", identity);
       const { data: usageRow } = await admin
         .from("chat_usage")
@@ -208,28 +262,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log("[/api/ask] Chat usage loaded. used:", used);
     }
 
-    // Real tier — also determines whether the chat cap applies.
-    // Premium subscribers get unlimited chat; Free/guest users stay capped for cost control.
-    let tier: "free" | "premium" | "guest" = "guest";
-    if (user) {
-      const { data: userRow } = await admin
-        .from("users")
-        .select("tier, subscription_end_date")
-        .eq("id", user.id)
-        .single();
-      let effectiveTier = userRow?.tier || "free";
-      if (effectiveTier === "premium" && userRow?.subscription_end_date && new Date(userRow.subscription_end_date) < new Date()) {
-        effectiveTier = "free";
-        await admin.from("users").update({ tier: "free" }).eq("id", user.id);
-      }
-      tier = effectiveTier as "free" | "premium";
-    }
-
-    const isUnlimitedChat = tier === "premium";
-    const maxMessages = mode === "advisor" ? MAX_ADVISOR_MESSAGES_PER_MONTH_FREE : MAX_CHAT_MESSAGES_PER_REPORT;
-
-    if (!isUnlimitedChat && used >= maxMessages) {
-      console.warn("[/api/ask] Chat message limit reached. identity:", identity, "| used:", used, "| mode:", mode);
+    if (used >= maxMessages) {
+      console.warn("[/api/ask] Chat message limit reached. identity:", identity, "| used:", used, "| mode:", mode, "| tier:", tier);
       return res.status(403).json({ error: "chat_limit_reached", remaining: 0, max: maxMessages });
     }
 
@@ -304,16 +338,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ---- Record usage AFTER a successful answer (never before) ----
     const newUsed = used + 1;
-    if (mode === "advisor") {
+    if (isPremiumTier) {
+      // Premium: bump the single shared monthly counter, regardless of mode.
+      await admin.from("users").update({ premium_chat_used_this_month: newUsed }).eq("id", user!.id);
+    } else if (mode === "advisor") {
       await admin.from("advisor_usage").upsert({
         identity,
         messages_used: newUsed,
         reset_at: new Date().toISOString(),
       });
+    } else {
+      await admin.from("chat_usage").upsert({
+        report_id: reportId,
+        identity,
+        messages_used: newUsed,
+        updated_at: new Date().toISOString(),
+      });
+    }
 
-      // Smart Memory System: update user interests after each advisor interaction
-      if (user) {
-        try {
+    // Smart Memory System: update user interests after each advisor interaction
+    // (any tier — this is independent of which usage counter was bumped above).
+    if (mode === "advisor" && user) {
+      try {
           // Extract product mentions from the user's question for smart memory
           const questionLower = question.toLowerCase();
           const productKeywords = [
@@ -365,17 +411,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               });
             }
           }
-        } catch (memoryErr) {
-          console.warn("[advisor] Smart memory update failed (non-critical):", memoryErr);
-        }
+      } catch (memoryErr) {
+        console.warn("[advisor] Smart memory update failed (non-critical):", memoryErr);
       }
-    } else {
-      await admin.from("chat_usage").upsert({
-        report_id: reportId,
-        identity,
-        messages_used: newUsed,
-        updated_at: new Date().toISOString(),
-      });
     }
     console.log("Saving database... done");
 
@@ -383,9 +421,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     logRequestSuccess(start);
     return res.status(200).json({
       answer: answer.trim(),
-      remaining: isUnlimitedChat ? null : Math.max(0, maxMessages - newUsed),
-      max: isUnlimitedChat ? null : maxMessages,
-      unlimited: isUnlimitedChat,
+      // Everyone now has a real cap (Free/guest: 20/mo or 20/report; Premium:
+      // 150/mo shared) — "unlimited" is kept in the response shape only so
+      // older clients don't break, but it's always false now.
+      remaining: Math.max(0, maxMessages - newUsed),
+      max: maxMessages,
+      unlimited: false,
       mode,
     });
   } catch (err: any) {

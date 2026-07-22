@@ -11,7 +11,7 @@ import {
   Search, Info, TrendingUp, AlertTriangle, Check, X, Compass,
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
-  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign, Bot, Brain,
+  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign,
 } from "lucide-react";
 
 export function ReportScreen() {
@@ -23,7 +23,7 @@ export function ReportScreen() {
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const [chatRemaining, setChatRemaining] = useState(20);
+  const [chatRemaining, setChatRemaining] = useState(isPremium ? 150 : 20);
   const [chatLimitHit, setChatLimitHit] = useState(false);
   const [listening, setListening] = useState(false);
   const [negVariant, setNegVariant] = useState<"polite" | "firm">("polite");
@@ -137,7 +137,7 @@ export function ReportScreen() {
       return;
     }
 
-    if (!isPremium && (chatLimitHit || chatRemaining <= 0)) {
+    if (chatLimitHit || chatRemaining <= 0) {
       setChatLimitHit(true);
       return;
     }
@@ -170,10 +170,8 @@ export function ReportScreen() {
       });
 
       if (res.status === 403) {
-        if (!isPremium) {
-          setChatLimitHit(true);
-          setChatRemaining(0);
-        }
+        setChatLimitHit(true);
+        setChatRemaining(0);
         setChatMessages((prev) => [...prev, { role: "assistant", content: t("chatLimitReached") }]);
         return;
       }
@@ -644,8 +642,8 @@ export function ReportScreen() {
           className="group relative flex items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 px-6 py-4 ring-1 ring-amber-500/20 transition-all hover:ring-amber-500/50 shadow-xl"
         >
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-500/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-[#0B0B0F] shadow-lg shadow-amber-500/20">
-            <Bot className="h-6 w-6" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 text-[#0B0B0F] shadow-lg shadow-amber-500/30">
+            <Sparkles className="h-5 w-5" />
           </div>
           <div className="flex flex-col items-start">
             <span className="text-sm font-bold text-amber-400">
@@ -658,74 +656,86 @@ export function ReportScreen() {
         </button>
       </div>
 
-      {/* Chat Panel */}
+      {/* Chat Panel — centered modal overlay so it always sits mid-screen and
+          can never get clipped at a screen edge (fixes the old bottom-corner
+          popup that could render half off-screen on mobile). */}
       {showChat && (
-        <div className={`fixed bottom-20 ${dir === "rtl" ? "left-4" : "right-4"} z-50 flex h-80 w-80 flex-col overflow-hidden rounded-2xl border border-amber-500/20 bg-[#0B0B0F] shadow-2xl`}>
-          <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 px-4 py-3">
-            <span className="flex items-center gap-2 text-sm font-bold text-amber-400">
-              <Bot className="h-4 w-4" /> {t("askAssistant")}
-            </span>
-            <div className="flex items-center gap-2">
-              {!isExample && (
-                <span className="text-[10px] text-zinc-500">
-                  {isPremium ? t("chatUnlimitedBadge") : t("chatQuestionsLeft").replace("{n}", String(chatRemaining))}
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowChat(false); }}
+        >
+          <div className="flex h-[75vh] max-h-[560px] w-full max-w-sm flex-col overflow-hidden rounded-3xl border border-amber-500/30 bg-[#0B0B0F] shadow-2xl shadow-amber-500/10">
+            <div className="flex items-center justify-between border-b border-zinc-800 bg-gradient-to-r from-zinc-900 to-zinc-900/50 px-4 py-3.5">
+              <span className="flex items-center gap-2 text-sm font-bold text-amber-400">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-300 to-amber-600 text-[#0B0B0F]">
+                  <Sparkles className="h-4 w-4" />
                 </span>
-              )}
-              <button onClick={() => setShowChat(false)} className="text-zinc-500 hover:text-zinc-300">
-                <X className="h-4 w-4" />
-              </button>
+                {t("askAssistant")}
+              </span>
+              <div className="flex items-center gap-3">
+                {!isExample && (
+                  <span className="text-[10px] text-zinc-500">
+                    {t("chatQuestionsLeft").replace("{n}", String(chatRemaining))}
+                  </span>
+                )}
+                <button onClick={() => setShowChat(false)} className="text-zinc-500 hover:text-zinc-300">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {chatMessages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center opacity-50">
-                <Brain className="h-10 w-10 text-zinc-600 mb-2" />
-                <p className="text-xs text-zinc-500">{t("askAssistantHint")}</p>
-              </div>
-            ) : (
-              chatMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
-                    msg.role === "user" ? "bg-amber-500 text-black font-medium" : "bg-zinc-800 text-zinc-200 border border-zinc-700"
-                  }`}>
-                    {msg.content}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chatMessages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center opacity-60">
+                  <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-300/20 to-amber-600/20 ring-1 ring-amber-500/20">
+                    <Sparkles className="h-7 w-7 text-amber-400" />
                   </div>
+                  <p className="text-xs text-zinc-500">{t("askAssistantHint")}</p>
                 </div>
-              ))
-            )}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="rounded-xl bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-400">{t("chatThinking")}</div>
+              ) : (
+                chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                      msg.role === "user" ? "bg-amber-500 text-black font-medium" : "bg-zinc-800 text-zinc-200 border border-zinc-700"
+                    }`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                ))
+              )}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="rounded-xl bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-400">{t("chatThinking")}</div>
+                </div>
+              )}
+            </div>
+            <div className="border-t border-zinc-800 bg-zinc-900/50 p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                  placeholder={t("typeMessage")}
+                  disabled={chatLoading || (chatLimitHit && !isExample)}
+                  className="flex-1 min-w-0 rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
+                />
+                <button
+                  onClick={toggleListening}
+                  disabled={chatLoading || (chatLimitHit && !isExample)}
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-50 ${
+                    listening ? "bg-red-500 text-white animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
+                  }`}
+                >
+                  <Mic className="h-5 w-5" />
+                </button>
+                <button
+                  onClick={sendChat}
+                  disabled={chatLoading || (chatLimitHit && !isExample) || !chatInput.trim()}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 text-black hover:brightness-110 disabled:opacity-50"
+                >
+                  <Send className="h-5 w-5" />
+                </button>
               </div>
-            )}
-          </div>
-          <div className="border-t border-zinc-800 bg-zinc-900/50 p-3">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendChat()}
-                placeholder={t("typeMessage")}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className="flex-1 rounded-xl border border-zinc-700 bg-zinc-800/50 px-4 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
-              />
-              <button
-                onClick={toggleListening}
-                disabled={chatLoading || (chatLimitHit && !isExample)}
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors disabled:opacity-50 ${
-                  listening ? "bg-red-500 text-white animate-pulse" : "bg-zinc-800 text-amber-400 hover:bg-zinc-700"
-                }`}
-              >
-                <Mic className="h-5 w-5" />
-              </button>
-              <button
-                onClick={sendChat}
-                disabled={chatLoading || (chatLimitHit && !isExample) || !chatInput.trim()}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-black hover:bg-amber-300 disabled:opacity-50"
-              >
-                <Send className="h-5 w-5" />
-              </button>
             </div>
           </div>
         </div>

@@ -594,49 +594,16 @@ export async function callAiWithFallback(
             priceRange = await computeMarketPriceRange(results, targetCurrency, prompt);
           }
 
-          // Retry: the generic query above is untargeted, so it often
-          // surfaces global listings with no price in the user's currency
-          // (or noisy pages the extractor can't trust). If that happened,
-          // spend ONE extra call — Serper first, Tavily as a fallback if
-          // Serper itself is down — on a query aimed specifically at that
-          // currency's regional retailers (and, for Arabic-speaking
-          // markets, an Arabic-language query) before giving up. This only
-          // fires when the first attempt found nothing, so the common/
-          // successful case still costs exactly one extra call.
-          if (!priceRange) {
-            const retry = buildLocalizedRetryQuery(prompt, targetCurrency);
-            if (retry) {
-              console.log(
-                `[GroqTavily] First-pass price extraction found nothing usable — retrying with localized query: "${retry.query}"`
-              );
-              try {
-                try {
-                  const { results: retryResults } = await searchSerper(retry.query, {
-                    includeDomains: retry.domains,
-                    gl: retry.gl,
-                    hl: retry.hl,
-                  });
-                  searchQueryCount += 1; // billed Serper call
-                  priceRange = await computeMarketPriceRange(retryResults, targetCurrency, prompt);
-                } catch (retrySerperErr: any) {
-                  console.error("[GroqTavily] Localized Serper retry failed — falling back to Tavily for the retry:");
-                  console.error(retrySerperErr);
-                  const { results: retryResults } = await searchTavily(retry.query, { includeDomains: retry.domains });
-                  searchQueryCount += 1; // billed Tavily call
-                  priceRange = await computeMarketPriceRange(retryResults, targetCurrency, prompt);
-                }
-                console.log(
-                  priceRange
-                    ? "[GroqTavily] Localized retry found a usable price."
-                    : "[GroqTavily] Localized retry still found nothing usable — leaving pricing to the model."
-                );
-              } catch (retryErr: any) {
-                console.error("[GroqTavily] Localized retry call failed:");
-                console.error(retryErr);
-                console.error(retryErr?.stack);
-              }
-            }
-          }
+          // NOTE: a second "localized retry" search used to fire here when the
+          // first price-extraction attempt found nothing (Serper, with Tavily
+          // as its own fallback) — up to a 3rd billed search call per
+          // analysis. That retry has been removed on purpose so the
+          // worst-case cost per analysis is capped at 2 billed search calls
+          // instead of 3 (1 Tavily context search + 1 Serper/Tavily price
+          // attempt, no second attempt). If the first attempt finds nothing,
+          // pricing is simply left to the model's own knowledge — the same
+          // safe fallback used everywhere else in this function, just
+          // without spending a 3rd search call to get there.
 
           if (priceRange) {
             console.log(
