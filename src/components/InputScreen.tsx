@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useApp } from "@/lib/AppContext";
 import { getCategoryIcon } from "@/lib/categoryIcons";
+import { getVariantChipGroups } from "@/lib/variantChips";
 import { currencies, FREE_MONTHLY_LIMIT } from "@/lib/types";
 import { getDemoReport } from "@/lib/analysisEngine";
 import { supabase } from "@/lib/supabase";
@@ -118,6 +119,18 @@ export function InputScreen() {
   };
 
   const Icon = useMemo(() => getCategoryIcon(product), [product]);
+  const variantChipGroups = useMemo(() => getVariantChipGroups(product), [product]);
+
+  // Tapping a chip appends it to specs (e.g. "128GB") instead of the user
+  // having to type it. Avoids adding the same value twice.
+  const toggleSpecChip = (value: string) => {
+    const parts = specs.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.includes(value)) {
+      setSpecs(parts.filter((p) => p !== value).join(", "));
+    } else {
+      setSpecs([...parts, value].join(", "));
+    }
+  };
 
   // Both Free and Premium now carry a monthly cap (Premium's is just much higher),
   // so quota can be exceeded on either tier.
@@ -345,6 +358,36 @@ export function InputScreen() {
               placeholder={lang === "ar" ? "اللون، السعة، المميزات..." : "Color, storage, features..."}
               className="border-zinc-700 bg-zinc-800/50 text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/50"
             />
+            {/* Quick-pick chips: tap the exact variant instead of typing it.
+                Narrows the market price range and keeps cache results precise. */}
+            {variantChipGroups.length > 0 && (
+              <div className="space-y-2 pt-1">
+                {variantChipGroups.map((group) => (
+                  <div key={group.label.en}>
+                    <p className="mb-1 text-[11px] text-zinc-500">{lang === "ar" ? group.label.ar : group.label.en}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.options.map((opt) => {
+                        const selected = specs.split(",").map((p) => p.trim()).includes(opt);
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => toggleSpecChip(opt)}
+                            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                              selected
+                                ? "border-amber-500 bg-amber-500/20 text-amber-400"
+                                : "border-zinc-700 bg-zinc-800/50 text-zinc-400 hover:border-amber-500/40 hover:text-amber-400"
+                            }`}
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Photo Upload - Available for ALL users */}

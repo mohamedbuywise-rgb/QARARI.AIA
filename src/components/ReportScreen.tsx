@@ -11,7 +11,7 @@ import {
   Search, Info, TrendingUp, AlertTriangle, Check, X, Compass,
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
-  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign,
+  Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign, Handshake,
 } from "lucide-react";
 
 export function ReportScreen() {
@@ -126,13 +126,14 @@ export function ReportScreen() {
     setListening(true);
   };
 
-  const sendChat = async () => {
-    if (!chatInput.trim() || chatLoading) return;
+  const sendChat = async (overrideQuestion?: string) => {
+    const question = (overrideQuestion ?? chatInput).trim();
+    if (!question || chatLoading) return;
 
     // Demo/example reports never hit the real API — no product to actually
     // research and no point spending a Groq call on it.
     if (isExample) {
-      setChatMessages((prev) => [...prev, { role: "user", content: chatInput }, { role: "assistant", content: t("chatDisabledExample") }]);
+      setChatMessages((prev) => [...prev, { role: "user", content: question }, { role: "assistant", content: t("chatDisabledExample") }]);
       setChatInput("");
       return;
     }
@@ -142,7 +143,6 @@ export function ReportScreen() {
       return;
     }
 
-    const question = chatInput.trim();
     const outgoingHistory = [...chatMessages, { role: "user" as const, content: question }];
     setChatMessages(outgoingHistory);
     setChatInput("");
@@ -192,6 +192,14 @@ export function ReportScreen() {
     } finally {
       setChatLoading(false);
     }
+  };
+
+  // Quick-chip shortcuts into the same assistant chat — no separate bot,
+  // no new API, just a pre-filled question sent through the existing /api/ask
+  // flow so it reuses this report's real offeredPrice/marketFairPrice data.
+  const askQuickQuestion = (question: string) => {
+    setShowChat(true);
+    sendChat(question);
   };
 
   const handleCompare = () => {
@@ -473,6 +481,12 @@ export function ReportScreen() {
                       {fmtPrice(alt?.estimatedPrice)} {cShort}
                     </span>
                   </div>
+                  {alt?.priceSource === "market_search" && alt?.priceRangeMin != null && alt?.priceRangeMax != null && (
+                    <p className="mt-0.5 text-[10px] text-zinc-500">
+                      {lang === "ar" ? "نطاق السوق" : "Market range"}: {fmtPrice(alt.priceRangeMin)}–{fmtPrice(alt.priceRangeMax)} {cShort}
+                      {alt?.confidence && alt.confidence !== "Unknown" ? ` · ${lang === "ar" ? "ثقة" : "confidence"}: ${alt.confidence}` : ""}
+                    </p>
+                  )}
                   <p className="mt-1 text-xs text-zinc-400">{bilingual(alt?.reason)}</p>
                   <p className="mt-1 text-xs text-zinc-500">{bilingual(alt?.whySuitable)}</p>
                 </div>
@@ -635,8 +649,37 @@ export function ReportScreen() {
         </Button>
       </div>
 
+      {/* Quick-chip shortcuts into the assistant — only surfaced when there's
+          an actual gap between offered and fair price worth negotiating.
+          Deliberately NOT a separate card: same bot, pre-filled question. */}
+      {typeof report.marketFairPriceMin === "number" && report.offeredPrice > report.marketFairPriceMin && (
+        <div className="mt-6 flex gap-2 overflow-x-auto pb-1">
+          <button
+            onClick={() =>
+              askQuickQuestion(
+                lang === "ar" ? "جهزلي سكريبت تفاوض على السعر ده" : "Give me a negotiation script for this price"
+              )
+            }
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-500/25 bg-zinc-900/60 px-3.5 py-2 text-xs font-bold text-amber-400 transition-colors hover:bg-amber-500/10"
+          >
+            <Handshake className="h-3.5 w-3.5" />
+            {lang === "ar" ? "جهزلي سكريبت تفاوض" : "Negotiation script"}
+          </button>
+          <button
+            onClick={() =>
+              askQuickQuestion(
+                lang === "ar" ? "ليه السعر ده تحديداً؟" : "Why exactly is this the fair price?"
+              )
+            }
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-700 bg-zinc-900/60 px-3.5 py-2 text-xs font-bold text-zinc-400 transition-colors hover:text-amber-400"
+          >
+            {lang === "ar" ? "ليه السعر ده تحديداً؟" : "Why this price?"}
+          </button>
+        </div>
+      )}
+
       {/* Smart Assistant Trigger */}
-      <div className="mt-6 flex justify-center">
+      <div className="mt-4 flex justify-center">
         <button
           onClick={() => setShowChat(true)}
           className="group relative flex items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 px-6 py-4 ring-1 ring-amber-500/20 transition-all hover:ring-amber-500/50 shadow-xl"

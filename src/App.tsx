@@ -10,6 +10,7 @@ import { UpgradeScreen } from "@/components/UpgradeScreen";
 import { CompareScreen } from "@/components/CompareScreen";
 import { GuideScreen } from "@/components/GuideScreen";
 import { AdvisorScreen } from "@/components/AdvisorScreen";
+import { WatchlistScreen } from "@/components/WatchlistScreen";
 
 import { useApp } from "@/lib/AppContext";
 
@@ -34,6 +35,8 @@ function ScreenRouter() {
       return <GuideScreen />;
     case "advisor":
       return <AdvisorScreen />;
+    case "watchlist":
+      return <WatchlistScreen />;
 
     default:
       return <DecisionInput />;

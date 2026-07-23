@@ -15,8 +15,13 @@ const CURRENCY_PATTERNS: { code: SupportedCurrency; regex: RegExp }[] = [
   { code: "USD", regex: /(US\$|USD|\$)/i },
 ];
 
-const REJECT_KEYWORDS = /accessory|cable|cover|case|screen protector|shipping|delivery|refurbished|open box|bundle|combo/i;
-const TRUSTED_RETAILERS = ["amazon", "noon", "jumia", "jarir", "extra", "carrefour", "bhphotovideo", "bestbuy", "apple", "samsung"];
+const NOISE_KEYWORDS = /accessory|cable|cover|case|screen protector|shipping|delivery|bundle|combo/i;
+// These words indicate the listing is NOT a brand-new unit. They should only
+// be rejected when the user is asking about a "new" purchase — for
+// "likeNew" (كسر زيرو/open box) and "used" (مستعمل) searches these are
+// exactly the listings we WANT, so they must not be filtered out.
+const CONDITION_INDICATOR_KEYWORDS = /refurbished|open box|used|second\s?hand|مستعمل|كسر زيرو/i;
+const TRUSTED_RETAILERS = ["amazon", "noon", "jumia", "jarir", "extra", "carrefour", "bhphotovideo", "bestbuy", "apple", "samsung", "dubizzle", "opensooq", "olx"];
 
 interface PriceHit {
   value: number;
@@ -34,7 +39,7 @@ function getTrustWeight(url: string): number {
   return 1;
 }
 
-function extractPrices(text: string, title: string, url: string): PriceHit[] {
+function extractPrices(text: string, title: string, url: string, condition: string): PriceHit[] {
   const prices: PriceHit[] = [];
   const numRegex = /\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?/g;
   let match;
@@ -52,7 +57,12 @@ function extractPrices(text: string, title: string, url: string): PriceHit[] {
       }
     }
 
-    if (currency && !REJECT_KEYWORDS.test(window) && !REJECT_KEYWORDS.test(title)) {
+    const isNoise = NOISE_KEYWORDS.test(window) || NOISE_KEYWORDS.test(title);
+    // Only reject "used/refurbished/open box" signals when the user actually
+    // wants a NEW unit — otherwise those are the correct matches to keep.
+    const isWrongCondition = condition === "new" && (CONDITION_INDICATOR_KEYWORDS.test(window) || CONDITION_INDICATOR_KEYWORDS.test(title));
+
+    if (currency && !isNoise && !isWrongCondition) {
       const weight = getTrustWeight(url);
       prices.push({ value: val, currency, url, title, weight });
     }
@@ -84,10 +94,10 @@ function calculateWeightedMedian(values: number[], weights: number[]): number {
   return sorted[sorted.length - 1].value;
 }
 
-export async function computeMarketPriceRange(results: any[], targetCurrency: SupportedCurrency, prompt: string) {
+export async function computeMarketPriceRange(results: any[], targetCurrency: SupportedCurrency, prompt: string, condition: string = "new") {
   let allPrices: PriceHit[] = [];
   for (const r of results) {
-    allPrices = allPrices.concat(extractPrices(r.content, r.title, r.url));
+    allPrices = allPrices.concat(extractPrices(r.content, r.title, r.url, condition));
   }
 
   if (allPrices.length === 0) return null;

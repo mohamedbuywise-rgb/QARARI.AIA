@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
-import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle, Bot, Zap } from "lucide-react";
+import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle, Bot, Zap, Bell } from "lucide-react";
 
 export function Header() {
   const { lang, setLang, t, navigate, screen, isPremium, user } = useApp();
@@ -51,6 +51,17 @@ export function Header() {
           >
             <History className="h-5 w-5" />
           </button>
+          {user && (
+            <button
+              onClick={() => navigate("watchlist")}
+              className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                screen === "watchlist" ? "bg-amber-500/15 text-amber-400" : "text-zinc-400 hover:bg-zinc-800/50 hover:text-amber-400"
+              }`}
+              title={t("watchlistTitle")}
+            >
+              <Bell className="h-5 w-5" />
+            </button>
+          )}
           <button
             onClick={() => navigate(user ? "profile" : "login")}
             className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${

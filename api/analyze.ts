@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
-import { callAiWithFallback } from "./_groq_tavily.js";
+import { callAiWithFallback, enrichAlternativesWithMarketPrices } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 
@@ -8,10 +8,14 @@ const FREE_MONTHLY_LIMIT = 5;
 const PREMIUM_MONTHLY_LIMIT = 50; // fair-use cap for paid subscribers, prevents runaway AI cost from outlier usage
 const CACHE_TTL_HOURS = 72; // how long a cached market-research result stays valid for reuse
 
-function normalizeCacheKey(product: string, currency: string, condition: string = "new"): string {
+function normalizeCacheKey(product: string, currency: string, condition: string = "new", specs: string = ""): string {
   const normalizedProduct = product.trim().toLowerCase().replace(/\s+/g, " ");
   const normalizedCondition = condition.trim().toLowerCase();
-  return `${normalizedProduct}::${normalizedCondition}::${currency.trim().toUpperCase()}`;
+  // specs (storage/RAM/size/color/etc.) must be part of the key — otherwise
+  // "iPhone 13 Pro" @ 128GB and "iPhone 13 Pro" @ 256GB collide into the same
+  // cached market-price result even though they're different products.
+  const normalizedSpecs = specs.trim().toLowerCase().replace(/\s+/g, " ");
+  return `${normalizedProduct}::${normalizedSpecs}::${normalizedCondition}::${currency.trim().toUpperCase()}`;
 }
 
 // ---- AI response shape validation/normalization ----
@@ -172,6 +176,8 @@ OFFERED PRICE: ${offeredPrice} ${currency}
 PRODUCT CONDITION: ${condition}
 USER NOTES: ${notes || "none"}
 USAGE PROFILE — purpose: ${purpose}, expected duration: ${duration}, other specs/preferences: ${specs || "none"}
+
+PRICE RANGE RULE: If a specific variant (storage/RAM/size/capacity/color) is given above, marketFairPriceMin/Max MUST reflect prices for THAT variant only — do not average across other variants of the same product. If no variant is given, marketPriceSummary must explicitly say the range spans multiple variants/configurations and name what info (e.g. storage) would narrow it.
 
 ${depthInstruction}
 
@@ -340,7 +346,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // window instead of paying for a brand-new Groq completion + Tavily
     // search call.
     console.log("Loading cache...");
-    const cacheKey = normalizeCacheKey(product, currency, condition);
+    const cacheKey = normalizeCacheKey(product, currency, condition, specs);
     const cacheCutoff = new Date(Date.now() - CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
     const { data: cachedRow } = await admin
@@ -379,6 +385,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
+      // ---- Enrich betterAlternatives with real, condition-matched prices ----
+      // The model's own estimatedPrice is just a guess (and often assumes
+      // "new" regardless of what the user picked). Replace it with a real
+      // median pulled from the same condition-aware search used for the
+      // main product, so alternatives are priced in the same condition
+      // (new / كسر زيرو / مستعمل) the user is actually shopping for.
+      let altSearchQueryCount = 0;
+      if (Array.isArray(parsed.betterAlternatives) && parsed.betterAlternatives.length > 0) {
+        try {
+          const { enriched, searchQueryCount } = await enrichAlternativesWithMarketPrices(
+            parsed.betterAlternatives,
+            currency,
+            condition === "used" ? "used" : condition === "likeNew" ? "likeNew" : "new"
+          );
+          parsed.betterAlternatives = enriched;
+          altSearchQueryCount = searchQueryCount;
+        } catch (e) {
+          console.error("[/api/analyze] Alternative price enrichment failed (non-fatal):", e);
+        }
+      }
+
       // Section 25: log AI usage/cost for every real Groq call, win or lose downstream.
       console.log("Saving database...");
       await logAiUsage(admin, {
@@ -386,7 +413,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model: aiResult.modelUsed,
         tier: user ? tier : "guest",
         userId: user?.id || null,
-        usage: aiResult.usage,
+        usage: { ...aiResult.usage, searchQueryCount: aiResult.usage.searchQueryCount + altSearchQueryCount },
       });
 
       // Store for future requests — best-effort, never blocks the response
