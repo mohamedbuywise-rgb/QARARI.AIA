@@ -1,15 +1,81 @@
+import { useState, useRef } from "react";
 import { useApp } from "@/lib/AppContext";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Crown, Check, ChevronLeft, Zap, Star, ShieldCheck, Rocket } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { INSTAPAY_NUMBER } from "@/lib/types";
+import { 
+  Crown, Check, ChevronLeft, Zap, Star, ShieldCheck, 
+  Rocket, Copy, Upload, Camera, X, CheckCircle2 
+} from "lucide-react";
 
 export function UpgradeScreen() {
-  const { t, lang, navigate } = useApp();
+  const { t, lang, navigate, showToast, session } = useApp();
+  const [selectedPlan, setSelectedPlan] = useState<{ id: string; title: string; price: string } | null>(null);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const handleSubscribeClick = () => {
-    window.open("https://www.instagram.com/qarari.ai", "_blank");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyNumber = () => {
+    navigator.clipboard.writeText(INSTAPAY_NUMBER);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setScreenshotFile(file);
+      const reader = new FileReader();
+      reader.onload = () => setScreenshot(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+    e.target.value = "";
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!session?.user) {
+      showToast(t("pleaseLogin"));
+      navigate("login");
+      return;
+    }
+    if (!screenshotFile) {
+      showToast(lang === "ar" ? "يرجى رفع صورة التحويل أولاً" : "Please upload the transfer screenshot first");
+      return;
+    }
+    setLoading(true);
+    try {
+      const path = `${session.user.id}/${Date.now()}-${screenshotFile.name}`;
+      const { error: uploadError } = await supabase.storage.from("screenshots").upload(path, screenshotFile);
+      if (uploadError) throw uploadError;
+
+      const res = await fetch("/api/subscribe", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ plan: selectedPlan?.id, screenshotUrl: path }),
+      });
+
+      if (!res.ok) throw new Error("subscribe_failed");
+
+      setSubmitted(true);
+      showToast(t("paymentSuccess"));
+    } catch (e) {
+      showToast(lang === "ar" ? "حدث خطأ، حاول مرة أخرى" : "Something went wrong, please retry");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const PlanCard = ({ 
+    id,
     title, 
     price, 
     features, 
@@ -17,6 +83,7 @@ export function UpgradeScreen() {
     badge = "", 
     isFree = false 
   }: { 
+    id: string;
     title: string; 
     price: string; 
     features: string; 
@@ -46,7 +113,7 @@ export function UpgradeScreen() {
       </div>
       {!isFree && (
         <Button
-          onClick={handleSubscribeClick}
+          onClick={() => setSelectedPlan({ id, title, price })}
           className={`w-full font-bold ${highlight ? 'bg-amber-500 text-[#0B0B0F] hover:bg-amber-400' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'}`}
         >
           <Zap className="mr-2 h-4 w-4" /> {t("subscribeNow")}
@@ -55,12 +122,107 @@ export function UpgradeScreen() {
     </div>
   );
 
+  if (submitted) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-12 text-center">
+        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/15">
+          <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+        </div>
+        <h2 className="mb-4 font-serif text-2xl font-bold text-amber-400">{t("paymentSuccess")}</h2>
+        <p className="mb-8 text-zinc-400">{t("activationTime")}</p>
+        <Button onClick={() => navigate("input")} className="w-full max-w-xs bg-amber-500 text-[#0B0B0F] hover:bg-amber-400">
+          {t("back")}
+        </Button>
+      </div>
+    );
+  }
+
+  if (selectedPlan) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-6">
+        <button onClick={() => setSelectedPlan(null)} className="mb-6 flex items-center gap-1 text-sm text-zinc-400 hover:text-amber-400">
+          <ChevronLeft className={`h-4 w-4 ${lang === "ar" ? "rotate-180" : ""}`} />
+          {t("back")}
+        </button>
+
+        <div className="rounded-2xl border border-amber-500/15 bg-zinc-900/60 p-6 shadow-xl">
+          <div className="mb-8 text-center">
+            <h2 className="text-xl font-bold text-amber-400">{t("paymentMethod")}</h2>
+            <p className="mt-2 text-sm text-zinc-400">{selectedPlan.title} — {selectedPlan.price}</p>
+          </div>
+
+          <div className="mb-8 space-y-4">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+              <p className="mb-3 text-center text-sm text-zinc-400">{t("transferViaInstaPay")}</p>
+              <div className="flex items-center justify-center gap-3">
+                <span className="font-mono text-2xl font-bold text-zinc-100 tracking-wider">{INSTAPAY_NUMBER}</span>
+                <button 
+                  onClick={handleCopyNumber}
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg transition-all ${copied ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-800 text-zinc-400 hover:text-amber-400'}`}
+                >
+                  {copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-sm font-medium text-zinc-300">{t("uploadScreenshot")}</Label>
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
+              <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileSelect} className="hidden" />
+              
+              {screenshot ? (
+                <div className="relative group overflow-hidden rounded-xl border border-amber-500/30">
+                  <img src={screenshot} alt="screenshot" className="h-48 w-full object-cover transition-transform group-hover:scale-105" />
+                  <button
+                    onClick={() => setScreenshot(null)}
+                    className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-red-500 text-white shadow-lg active:scale-90"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 p-6 text-zinc-500 transition-all hover:border-amber-500/30 hover:text-amber-400"
+                  >
+                    <Upload className="h-6 w-6" />
+                    <span className="text-xs font-bold">{t("chooseFile")}</span>
+                  </button>
+                  <button 
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 p-6 text-zinc-500 transition-all hover:border-amber-500/30 hover:text-amber-400"
+                  >
+                    <Camera className="h-6 w-6" />
+                    <span className="text-xs font-bold">{t("takePhoto")}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 rounded-xl bg-amber-500/5 p-4 border border-amber-500/10">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-[11px] leading-relaxed text-zinc-400">{t("activationTime")}</p>
+            </div>
+            
+            <Button
+              onClick={handleConfirmPayment}
+              disabled={loading || !screenshot}
+              className="w-full h-12 bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold text-lg hover:from-amber-300 hover:to-amber-500 disabled:opacity-50"
+            >
+              {loading ? <Rocket className="h-5 w-5 animate-bounce" /> : t("confirmPayment")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6 pb-20">
-      <button
-        onClick={() => navigate("input")}
-        className="mb-6 flex items-center gap-1 text-sm text-zinc-400 hover:text-amber-400"
-      >
+    <div className="mx-auto max-w-4xl px-4 py-6 pb-24">
+      <button onClick={() => navigate("input")} className="mb-6 flex items-center gap-1 text-sm text-zinc-400 hover:text-amber-400">
         <ChevronLeft className={`h-4 w-4 ${lang === "ar" ? "rotate-180" : ""}`} />
         {t("back")}
       </button>
@@ -75,42 +237,29 @@ export function UpgradeScreen() {
 
       <div className="space-y-12">
         {/* Free Plan */}
-        <section>
-          <PlanCard 
-            title={t("freePlan")}
-            price={lang === "ar" ? "مجانًا" : "Free"}
-            features={t("freePlanFeatures")}
-            isFree={true}
-          />
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-zinc-200">{t("freePlan")}</h3>
+              <p className="text-xs text-zinc-500 mt-1">{t("freePlanFeatures")}</p>
+            </div>
+            <div className="text-xl font-bold text-zinc-100">{lang === "ar" ? "مجانًا" : "Free"}</div>
+          </div>
         </section>
 
-        {/* Direct Use Bundles */}
+        {/* One-time Usage */}
         <section>
           <div className="mb-6 flex items-center gap-3">
             <Star className="h-5 w-5 text-amber-500" />
-            <h2 className="text-xl font-bold text-zinc-100">{t("oneTimePlans")}</h2>
+            <h2 className="text-xl font-bold text-zinc-100">{t("oneTimeUsage")}</h2>
             <span className="rounded-full bg-zinc-800 px-3 py-1 text-[10px] font-medium text-zinc-400">
               {t("noExpiration")}
             </span>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
-            <PlanCard 
-              title={t("oneTimeSmall")}
-              price={t("oneTimeSmallPrice")}
-              features={t("oneTimeSmallFeatures")}
-            />
-            <PlanCard 
-              title={t("oneTimeMedium")}
-              price={t("oneTimeMediumPrice")}
-              features={t("oneTimeMediumFeatures")}
-              highlight={true}
-              badge={lang === "ar" ? "الأكثر طلبًا" : "Popular"}
-            />
-            <PlanCard 
-              title={t("oneTimeLarge")}
-              price={t("oneTimeLargePrice")}
-              features={t("oneTimeLargeFeatures")}
-            />
+            <PlanCard id="small_bundle" title={t("oneTimeSmall")} price={t("oneTimeSmallPrice")} features={t("oneTimeSmallFeatures")} />
+            <PlanCard id="medium_bundle" title={t("oneTimeMedium")} price={t("oneTimeMediumPrice")} features={t("oneTimeMediumFeatures")} highlight={true} badge={lang === "ar" ? "الأكثر طلبًا" : "Popular"} />
+            <PlanCard id="large_bundle" title={t("oneTimeLarge")} price={t("oneTimeLargePrice")} features={t("oneTimeLargeFeatures")} />
           </div>
         </section>
 
@@ -118,31 +267,19 @@ export function UpgradeScreen() {
         <section>
           <div className="mb-6 flex items-center gap-3">
             <Rocket className="h-5 w-5 text-amber-500" />
-            <h2 className="text-xl font-bold text-zinc-100">{lang === "ar" ? "اشتراكات شهرية" : "Monthly Subscriptions"}</h2>
+            <h2 className="text-xl font-bold text-zinc-100">{t("monthlySubscription")}</h2>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <PlanCard 
-              title={t("smartShopper")}
-              price={t("smartShopperPrice")}
-              features={t("smartShopperFeatures")}
-            />
-            <PlanCard 
-              title={t("powerBuyer")}
-              price={t("powerBuyerPrice")}
-              features={t("powerBuyerFeatures")}
-              highlight={true}
-              badge={lang === "ar" ? "للمحترفين" : "Pro"}
-            />
+            <PlanCard id="smart_shopper" title={t("smartShopper")} price={t("smartShopperPrice")} features={t("smartShopperFeatures")} />
+            <PlanCard id="power_buyer" title={t("powerBuyer")} price={t("powerBuyerPrice")} features={t("powerBuyerFeatures")} highlight={true} badge={lang === "ar" ? "للمحترفين" : "Pro"} />
           </div>
         </section>
 
         {/* Value reinforcement */}
-        <div className="mt-12 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6 text-center">
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6 text-center">
           <ShieldCheck className="mx-auto mb-3 h-8 w-8 text-emerald-500" />
           <p className="text-sm font-medium text-emerald-400">
-            {lang === "ar" 
-              ? "قرار شراء واحد صحيح يوفر لك آلاف الجنيهات!" 
-              : "One right purchase decision saves you thousands!"}
+            {lang === "ar" ? "قرار شراء واحد صحيح يوفر لك آلاف الجنيهات!" : "One right purchase decision saves you thousands!"}
           </p>
         </div>
       </div>
