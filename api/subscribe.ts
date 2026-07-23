@@ -3,7 +3,13 @@ import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { sendTelegramAlert } from "./_telegram.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "./_logger.js";
 
-const MONTHLY_PRICE = 150;
+const PLAN_PRICES: Record<string, number> = {
+  small_bundle: 49,
+  medium_bundle: 79,
+  large_bundle: 119,
+  smart_shopper: 150,
+  power_buyer: 300,
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const start = Date.now();
@@ -24,7 +30,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log("Authentication OK. userId:", user.id);
 
     const { plan, screenshotUrl } = req.body || {};
-    if (plan !== "monthly") {
+    const amount = PLAN_PRICES[plan];
+
+    if (!amount) {
       console.warn("[/api/subscribe] Invalid plan:", plan);
       return res.status(400).json({ error: "invalid_plan" });
     }
@@ -33,7 +41,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "missing_screenshot" });
     }
 
-    const amount = MONTHLY_PRICE;
     const admin = getSupabaseAdmin();
 
     // Always created as pending_review — activation happens ONLY via admin

@@ -110,6 +110,12 @@ export interface UserProfile {
   phone: string;
   interests: string[];
   tier: "free" | "premium";
+  currentPlanName?: string;
+  chatMessagesLimit?: number;
+  chatMessagesUsed?: number;
+  priceAlertsLimit?: number;
+  priceAlertsUsed?: number;
+  canExportPdf?: boolean;
   subscriptionEndDate: number | null;
   referralCode: string;
   inviteCount: number;
