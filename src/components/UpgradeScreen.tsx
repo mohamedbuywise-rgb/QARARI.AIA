@@ -134,7 +134,7 @@ export function UpgradeScreen() {
               badge={lang === "ar" ? "للمحترفين" : "Pro"}
             />
           </div>
-        </div>
+        </section>
 
         {/* Value reinforcement */}
         <div className="mt-12 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6 text-center">
