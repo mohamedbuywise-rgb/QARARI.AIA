@@ -11,12 +11,17 @@ export interface AiUsage {
   searchQueryCount: number;
 }
 
-interface SerperResult {
+export interface SerperResult {
   title: string;
   url: string;
   content: string;
   rawContent: string | null;
 }
+
+// Feature flag: only show a B.TECH card in the retailer price comparison
+// once we've confirmed an affiliate/commission deal with them. Toggle via
+// env var — no code change needed to flip it on later.
+export const SHOW_BTECH_COMPARISON = process.env.SHOW_BTECH_COMPARISON === "true";
 
 interface CountryRetailerMap {
   official: string;
@@ -159,7 +164,7 @@ interface SearchState {
   validPriceCount: number;
 }
 
-async function smartAdaptiveSearch(product: string, currency: string, region: { gl: string; hl: string }, condition: "new" | "likeNew" | "used"): Promise<{ results: SerperResult[]; searchCount: number }> {
+async function smartAdaptiveSearch(product: string, currency: string, region: { gl: string; hl: string }, condition: "new" | "likeNew" | "used"): Promise<{ results: SerperResult[]; searchCount: number; retailerSearchResults: SerperResult[] }> {
   const state: SearchState = {
     allResults: [],
     searchCount: 0,
@@ -175,6 +180,8 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
 
   // New-condition retailers only sell new stock, so they're irrelevant when
   // hunting for likeNew/used — skip straight to secondhand marketplaces.
+  // (No official retail price comparison makes sense for used/likeNew, so
+  // retailerSearchResults stays empty for this branch.)
   if (condition !== "new") {
     console.log(`[SmartSearch] Condition=${condition}: searching secondhand marketplaces`);
     const usedQuery = usedSites.map(m => `site:${m}`).join(" OR ");
@@ -185,7 +192,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
 
     let priceAnalysis = await computeMarketPriceRange(state.allResults, currency as any, `PRODUCT: ${product}`, condition);
     if (priceAnalysis?.confidence === "High" && priceAnalysis.validCount >= 5) {
-      return { results: state.allResults, searchCount: state.searchCount };
+      return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [] };
     }
 
     // Broaden with a plain query (still condition-qualified) if not enough signal yet
@@ -194,7 +201,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
     state.allResults.push(...results2);
     state.searchCount++;
 
-    return { results: state.allResults, searchCount: state.searchCount };
+    return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [] };
   }
 
   // SEARCH 1: Official Store
@@ -209,7 +216,9 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
   let priceAnalysis = await computeMarketPriceRange(state.allResults, currency as any, `PRODUCT: ${product}`, condition);
   if (priceAnalysis?.confidence === "High" && priceAnalysis.validCount >= 5) {
     console.log("[SmartSearch] Early stop: Confidence >= 90%");
-    return { results: state.allResults, searchCount: state.searchCount };
+    // Official-store-only stop means we never ran the marketplace (Jumia/Noon)
+    // query, so there's nothing to build a retailer price comparison from.
+    return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [] };
   }
 
   // SEARCH 2: Largest Marketplace
@@ -221,13 +230,17 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
   state.searchCount++;
   console.log(`[SmartSearch] Search 2 returned ${results2.length} results`);
 
+  // These are the results that feed the per-retailer price comparison shown
+  // in ReportScreen — reused as-is, no extra Serper call.
+  const retailerSearchResults = results2;
+
   // Check early stop condition 2: At least 5 valid prices AND median change < 1%
   priceAnalysis = await computeMarketPriceRange(state.allResults, currency as any, `PRODUCT: ${product}`, condition);
   if (priceAnalysis?.validCount >= 5) {
     const medianChange = state.lastMedian ? Math.abs(priceAnalysis.mid - state.lastMedian) / state.lastMedian : 1;
     if (medianChange < 0.01) {
       console.log("[SmartSearch] Early stop: 5+ prices with <1% median change");
-      return { results: state.allResults, searchCount: state.searchCount };
+      return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults };
     }
     state.lastMedian = priceAnalysis.mid;
   }
@@ -239,7 +252,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
   
   if (state.validPriceCount === pricesBefore && state.searchCount >= 2) {
     console.log("[SmartSearch] Early stop: No new valid prices in last searches");
-    return { results: state.allResults, searchCount: state.searchCount };
+    return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults };
   }
 
   // If confidence still below 90%, execute ONE additional search (Google Shopping)
@@ -252,7 +265,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
     console.log(`[SmartSearch] Search 3 returned ${results3.length} results`);
   }
 
-  return { results: state.allResults, searchCount: state.searchCount };
+  return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults };
 }
 
 async function callGroqModel(model: string, system: string, user: string) {
@@ -271,60 +284,6 @@ async function callGroqModel(model: string, system: string, user: string) {
   return res.json();
 }
 
-/**
- * Section 17: Retailer Price Comparison
- * Extract direct prices from specific retailers found in search results.
- */
-export async function extractRetailerPrices(
-  results: SerperResult[],
-  currency: string,
-  condition: string = "new"
-): Promise<{ retailer: string; price: number; url: string; currency: string }[]> {
-  const SHOW_BTECH_COMPARISON = true; // Feature flag (Section 17)
-  const retailers = [
-    { name: "Jumia", domains: ["jumia.com.eg"] },
-    { name: "Noon", domains: ["noon.com"] },
-    ...(SHOW_BTECH_COMPARISON ? [{ name: "B.TECH", domains: ["btech.com"] }] : []),
-  ];
-
-  const extracted: { retailer: string; price: number; url: string; currency: string }[] = [];
-
-  for (const retailer of retailers) {
-    const retailerResults = results.filter((r) => retailer.domains.some((d) => r.url.includes(d)));
-    if (retailerResults.length === 0) continue;
-
-    let bestPrice: number | null = null;
-    let bestUrl: string = "";
-
-    for (const res of retailerResults) {
-      const prices = extractPrices(res.content, res.title, res.url, condition);
-      const validPrices = prices.filter((p) => p.currency === currency);
-      if (validPrices.length > 0) {
-        // Sort by value to find the cheapest valid price for this retailer
-        validPrices.sort((a, b) => a.value - b.value);
-        if (bestPrice === null || validPrices[0].value < bestPrice) {
-          bestPrice = validPrices[0].value;
-          bestUrl = res.url;
-        }
-      }
-    }
-
-    if (bestPrice !== null) {
-      extracted.push({
-        retailer: retailer.name,
-        price: bestPrice,
-        url: bestUrl,
-        currency,
-      });
-    }
-  }
-
-  return extracted;
-}
-
-// Re-export extractPrices for use in analyze.ts
-export { extractPrices };
-
 export async function callAiWithFallback(
   prompt: string,
   imageBase64?: any,
@@ -333,9 +292,12 @@ export async function callAiWithFallback(
   let searchContext = "";
   let searchQueryCount = 0;
   let allResults: SerperResult[] = [];
+  let retailerSearchResults: SerperResult[] = [];
+  let targetCurrencyUsed = "EGP";
 
   if (useSearch) {
     const targetCurrency = extractTargetCurrency(prompt) || "EGP";
+    targetCurrencyUsed = targetCurrency;
     const product = extractProductName(prompt);
     const specs = extractSpecs(prompt);
     const condition = extractCondition(prompt);
@@ -343,9 +305,10 @@ export async function callAiWithFallback(
     const region = CURRENCY_REGION_HINTS[targetCurrency] || { gl: "eg", hl: "ar" };
 
     // Execute Smart Adaptive Search
-    const { results, searchCount } = await smartAdaptiveSearch(searchTerm, targetCurrency, region, condition);
+    const { results, searchCount, retailerSearchResults: retailerResults } = await smartAdaptiveSearch(searchTerm, targetCurrency, region, condition);
     allResults = results;
     searchQueryCount = searchCount;
+    retailerSearchResults = retailerResults;
 
     const priceRange = await computeMarketPriceRange(allResults, targetCurrency as any, prompt, condition);
     if (priceRange) {
@@ -371,7 +334,8 @@ export async function callAiWithFallback(
         searchQueryCount
       },
       usedSearch: useSearch,
-      searchResults: allResults // Section 17: Return all results for price extraction
+      retailerSearchResults,
+      currency: targetCurrencyUsed
     };
   } catch (e) {
     const json = await callGroqModel(FALLBACK_MODEL, systemPrompt, userPrompt);
@@ -385,7 +349,8 @@ export async function callAiWithFallback(
         searchQueryCount
       },
       usedSearch: useSearch,
-      searchResults: allResults // Section 17: Return all results for price extraction
+      retailerSearchResults,
+      currency: targetCurrencyUsed
     };
   }
 }
@@ -457,4 +422,84 @@ export async function enrichAlternativesWithMarketPrices(
   );
 
   return { enriched: results, searchQueryCount };
+}
+
+export interface RetailerPrice {
+  retailer: string;
+  price: number;
+  url: string;
+  currency: string;
+}
+
+// Retailers eligible for the ReportScreen price comparison, matched against
+// each result's hostname. B.TECH is included only behind SHOW_BTECH_COMPARISON.
+// amazon.eg is intentionally excluded — it still contributes to the general
+// market-price search, it just never appears in this comparison.
+function getComparisonRetailers(): { domain: string; name: string }[] {
+  const retailers = [
+    { domain: "jumia.com.eg", name: "Jumia" },
+    { domain: "noon.com", name: "Noon" },
+  ];
+  if (SHOW_BTECH_COMPARISON) {
+    retailers.push({ domain: "btech.com", name: "B.TECH" });
+  }
+  return retailers;
+}
+
+// Same numeric/price-window heuristic as _priceExtraction's extractPrices,
+// kept local (and intentionally simpler — no currency-symbol matching)
+// since here we already know the currency from the query context and just
+// need "the cheapest plausible price mentioned for this specific listing".
+function extractCheapestPriceFromText(text: string): number | null {
+  const numRegex = /\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?/g;
+  let match;
+  let cheapest: number | null = null;
+  while ((match = numRegex.exec(text)) !== null) {
+    const val = parseFloat(match[0].replace(/[,\s]/g, ""));
+    if (val < 10 || val > 20_000_000) continue; // filter out ratings, counts, years, etc.
+    if (cheapest === null || val < cheapest) cheapest = val;
+  }
+  return cheapest;
+}
+
+function hostnameMatches(url: string, domain: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    return hostname === domain || hostname.endsWith(`.${domain}`);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds a per-retailer price comparison (Jumia, Noon, optionally B.TECH)
+ * straight from the Search 2 ("Largest Marketplace") results already
+ * fetched by smartAdaptiveSearch — no additional Serper query. Returns the
+ * cheapest valid price + direct product URL found for each matched domain,
+ * excluding amazon.eg entirely.
+ */
+export function extractRetailerPrices(results: SerperResult[], currency: string): RetailerPrice[] {
+  const retailers = getComparisonRetailers();
+  const prices: RetailerPrice[] = [];
+
+  for (const { domain, name } of retailers) {
+    let best: { price: number; url: string } | null = null;
+
+    for (const r of results) {
+      if (!r.url || !hostnameMatches(r.url, domain)) continue;
+
+      const price = extractCheapestPriceFromText(`${r.title} ${r.content}`);
+      if (price === null) continue;
+
+      if (!best || price < best.price) {
+        best = { price, url: r.url };
+      }
+    }
+
+    if (best) {
+      prices.push({ retailer: name, price: best.price, url: best.url, currency });
+    }
+  }
+
+  return prices;
 }
