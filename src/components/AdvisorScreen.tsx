@@ -41,12 +41,24 @@ export function AdvisorScreen() {
 
   const handleSend = () => {
     if (!input.trim() || loading) return;
-    requireAuth(async () => {
-      const question = input.trim();
-      setMessages((prev) => [...prev, { role: "user", content: question }]);
-      setInput("");
-      setLoading(true);
-      
+    
+    const question = input.trim();
+    
+    // Check auth before sending (Section 7)
+    if (!session?.user) {
+      requireAuth(() => {
+        // This will be called after successful login
+        // But for better UX, we just navigate to login if not authed
+      });
+      return;
+    }
+
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setInput("");
+    setLoading(true);
+    
+    // Wrap the async call to be safe
+    (async () => {
       try {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
@@ -62,16 +74,29 @@ export function AdvisorScreen() {
           }),
         });
 
-        if (!res.ok) throw new Error();
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          if (res.status === 403) {
+            setMessages((prev) => [...prev, { role: "assistant", content: lang === "ar" ? "وصلت للحد الأقصى للرسائل المجانية، اشترك في بريميوم لفتح دردشة غير محدودة!" : "You've reached the free message limit, upgrade to Premium for unlimited chat!" }]);
+            return;
+          }
+          throw new Error(errData.error || "failed");
+        }
+        
         const data = await res.json();
-        setMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
-        setShowSuggestions(false);
-      } catch {
+        if (data.answer) {
+          setMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
+          setShowSuggestions(false);
+        } else {
+          throw new Error("no_answer");
+        }
+      } catch (err) {
+        console.error("Advisor chat error:", err);
         setMessages((prev) => [...prev, { role: "assistant", content: lang === "ar" ? "حدث خطأ، حاول مرة أخرى" : "Error, please try again" }]);
       } finally {
         setLoading(false);
       }
-    });
+    })();
   };
 
   return (

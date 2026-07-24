@@ -3,11 +3,10 @@ import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
+import { DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
 
-// Fair-use cap for paid subscribers — Compare used to be unlimited, but each
-// comparison is a full Groq call with a Tavily search (same cost as a
-// scan), so it needs the same kind of monthly ceiling /api/analyze enforces.
-const COMPARE_MONTHLY_LIMIT = 10;
+// Section 15: Default compare limit (used as fallback if user row doesn't have dynamic limit)
+const DEFAULT_COMPARE_LIMIT = DEFAULT_PREMIUM_LIMITS.compares;
 
 function buildComparePrompt(productA: string, productB: string, priceA: number, priceB: number, currency: string) {
   return `You are a purchase-decision analyst with real-time web search access. Research CURRENT real market data for these two products and produce a structured JSON comparison.
@@ -114,9 +113,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await admin.from("users").update({ compares_used_this_month: 0, compares_reset_at: now.toISOString() }).eq("id", user.id);
     }
 
-    if (comparesUsed >= COMPARE_MONTHLY_LIMIT) {
-      console.warn("[/api/compare] Monthly compare limit reached for user:", user.id);
-      return res.status(403).json({ error: "compare_limit_reached", remaining: 0, max: COMPARE_MONTHLY_LIMIT });
+    // Section 15: Use dynamic limit from user row (stored when plan was activated)
+    const comparesLimit = userRow.compares_limit_this_month || DEFAULT_COMPARE_LIMIT;
+    
+    if (comparesUsed >= comparesLimit) {
+      console.warn("[/api/compare] Monthly compare limit reached for user:", user.id, "| limit:", comparesLimit);
+      return res.status(403).json({ error: "compare_limit_reached", remaining: 0, max: comparesLimit });
     }
 
     const prompt = buildComparePrompt(productA, productB, Number(priceA), Number(priceB), currency || "EGP");

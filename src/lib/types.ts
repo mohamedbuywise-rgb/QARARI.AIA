@@ -39,6 +39,12 @@ export interface Alternative {
   estimatedPrice: number;
   reason: BilingualText;
   whySuitable: BilingualText;
+  // Enriched fields from market search (Section 6/25)
+  priceSource?: "ai_estimate" | "market_search";
+  medianPrice?: number | null;
+  priceRangeMin?: number | null;
+  priceRangeMax?: number | null;
+  confidence?: string;
 }
 
 export interface AnalysisResult {

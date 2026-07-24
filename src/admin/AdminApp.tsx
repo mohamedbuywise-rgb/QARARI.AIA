@@ -11,7 +11,6 @@ type Tab = "requests" | "metrics" | "costs";
 // Login
 // ---------------------------------------------------------------------------
 function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
-  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -25,15 +24,14 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-username": username,
           "x-admin-password": password,
         },
       });
       if (!res.ok) {
-        setError("بيانات الدخول غير صحيحة");
+        setError("كلمة المرور غير صحيحة");
         return;
       }
-      storeCreds({ username, password });
+      storeCreds({ username: "admin", password });
       onSuccess();
     } catch {
       setError("حصل خطأ، حاول تاني");
@@ -55,27 +53,21 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
 
         <div className="space-y-3">
           <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500/50"
-            autoComplete="username"
-          />
-          <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             type="password"
-            placeholder="Password"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500/50"
+            placeholder="كلمة المرور"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500/50 text-center"
             autoComplete="current-password"
+            autoFocus
           />
         </div>
 
-        {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-xs text-red-400 text-center">{error}</p>}
 
         <button
           type="submit"
-          disabled={loading || !username || !password}
+          disabled={loading || !password}
           className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-400 to-amber-600 py-2.5 text-sm font-bold text-[#0B0B0F] transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}

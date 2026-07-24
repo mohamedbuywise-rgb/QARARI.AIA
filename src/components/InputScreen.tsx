@@ -106,6 +106,10 @@ export function InputScreen() {
       const data = await res.json();
       if (data.answer) {
         setChatMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
+      } else {
+        // Fallback for raw text if any (though backend should return JSON now)
+        const text = typeof data === 'string' ? data : JSON.stringify(data);
+        setChatMessages((prev) => [...prev, { role: "assistant", content: text }]);
       }
       if (!data.unlimited && typeof data.remaining === "number") {
         setChatRemaining(data.remaining);

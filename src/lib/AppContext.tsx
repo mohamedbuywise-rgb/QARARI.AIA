@@ -182,19 +182,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const saveToHistory = useCallback(async (r: AnalysisResult) => {
     if (!session?.user) return;
+    
+    // Ensure numeric values are never null for the database (Section 2/12)
     const { error } = await supabase.from("analyses").insert({
       user_id: session.user.id,
       product: r.product,
       offered_price: r.offeredPrice,
       currency: r.currency,
       verdict: r.verdict,
-      market_fair_price_min: r.marketFairPriceMin,
-      market_fair_price_max: r.marketFairPriceMax,
-      market_fair_price_mid: r.marketFairPriceMid,
-      money_saved: r.moneySaved,
+      market_fair_price_min: r.marketFairPriceMin || 0,
+      market_fair_price_max: r.marketFairPriceMax || 0,
+      market_fair_price_mid: r.marketFairPriceMid || 0,
+      money_saved: r.moneySaved || 0,
       full_report: r,
     });
-    if (error) return;
+    if (error) {
+      console.error("Save to history failed:", error);
+      return;
+    }
 
     await refreshHistory();
 

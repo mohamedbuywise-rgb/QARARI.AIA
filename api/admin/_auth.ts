@@ -6,10 +6,15 @@ import type { VercelRequest } from "@vercel/node";
 export function isValidAdmin(req: VercelRequest): boolean {
   const username = req.headers["x-admin-username"];
   const password = req.headers["x-admin-password"];
+  
+  // Section 15: Simplified admin entry. If ADMIN_USERNAME is set in env, we still check it
+  // for backward compatibility, but if only password is provided we check that.
+  const envUser = process.env.ADMIN_USERNAME || "admin";
+  const envPass = process.env.ADMIN_PASSWORD;
+
   return (
-    typeof username === "string" &&
     typeof password === "string" &&
-    username === process.env.ADMIN_USERNAME &&
-    password === process.env.ADMIN_PASSWORD
+    password === envPass &&
+    (username ? username === envUser : true)
   );
 }

@@ -2,8 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { isValidAdmin } from "./_auth.js";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "../_logger.js";
-
-const MONTHLY_PRICE = 150;
+import { getPlanConfig } from "../_planConfig.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const start = Date.now();
@@ -25,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log("Loading metrics (parallel Supabase queries)...");
     const [
       { count: totalUsers },
-      { count: premiumUsers },
+      { data: premiumUserRows },
       { count: newSignupsWeek },
       { count: totalAnalyses },
       { count: analysesThisMonth },
@@ -36,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { data: activeSubs },
     ] = await Promise.all([
       admin.from("users").select("id", { count: "exact", head: true }),
-      admin.from("users").select("id", { count: "exact", head: true }).eq("tier", "premium"),
+      admin.from("users").select("current_plan_name").eq("tier", "premium"),
       admin.from("users").select("id", { count: "exact", head: true }).gte("created_at", sevenDaysAgo),
       admin.from("analyses").select("id", { count: "exact", head: true }),
       admin.from("analyses").select("id", { count: "exact", head: true }).gte("created_at", startOfMonth),
@@ -49,11 +48,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const totalMoneySaved = (moneySavedRows || []).reduce((sum: number, r: any) => sum + Number(r.total_money_saved || 0), 0);
 
-    // Rough MRR estimate: count of currently-premium users × monthly price.
-    const mrrEstimate = (premiumUsers || 0) * MONTHLY_PRICE;
+    const premiumUsers = (premiumUserRows || []).length;
+
+    // MRR estimate: sum of each premium user's actual plan price (Section 15 config),
+    // not a flat rate — different bundles have different prices.
+    const mrrEstimate = (premiumUserRows || []).reduce(
+      (sum: number, r: any) => sum + (getPlanConfig(r.current_plan_name)?.price || 0),
+      0
+    );
 
     const newMrrThisMonth = (activeSubs || []).reduce(
-      (sum: number) => sum + MONTHLY_PRICE,
+      (sum: number, r: any) => sum + (getPlanConfig(r.plan)?.price || 0),
       0
     );
 

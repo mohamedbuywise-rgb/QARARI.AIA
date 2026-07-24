@@ -2,14 +2,13 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { sendTelegramAlert } from "./_telegram.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "./_logger.js";
+import { getAllPlans } from "./_planConfig.js";
 
-const PLAN_PRICES: Record<string, number> = {
-  small_bundle: 49,
-  medium_bundle: 79,
-  large_bundle: 119,
-  smart_shopper: 150,
-  power_buyer: 300,
-};
+// Section 15: Get plan prices from centralized config (single source of truth)
+const PLAN_PRICES: Record<string, number> = {};
+for (const plan of getAllPlans()) {
+  PLAN_PRICES[plan.id] = plan.price;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const start = Date.now();
@@ -32,8 +31,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { plan, screenshotUrl } = req.body || {};
     const amount = PLAN_PRICES[plan];
 
-    if (!amount) {
-      console.warn("[/api/subscribe] Invalid plan:", plan);
+    if (!amount || amount <= 0) {
+      console.warn("[/api/subscribe] Invalid plan:", plan, "| amount:", amount);
       return res.status(400).json({ error: "invalid_plan" });
     }
     if (!screenshotUrl || typeof screenshotUrl !== "string") {

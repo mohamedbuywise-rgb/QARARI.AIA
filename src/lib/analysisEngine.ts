@@ -61,6 +61,10 @@ export function generateAnalysis(product: string, offeredPrice: number, currency
         ar: "يناسب احتياجاتك بشكل جيد ويوفر قيمة أفضل مقابل السعر.",
         en: "Suits your needs well and offers better value for money.",
       },
+      priceSource: "market_search",
+      priceRangeMin: Math.round(altPrice * 0.9),
+      priceRangeMax: Math.round(altPrice * 1.1),
+      confidence: "High",
     });
   }
 

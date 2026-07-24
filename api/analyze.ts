@@ -3,9 +3,10 @@ import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback, enrichAlternativesWithMarketPrices } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
+import { FREE_TIER_LIMITS, DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
 
-const FREE_MONTHLY_LIMIT = 5;
-const PREMIUM_MONTHLY_LIMIT = 50; // fair-use cap for paid subscribers, prevents runaway AI cost from outlier usage
+// Section 15: Use centralized config for free tier limits
+const FREE_MONTHLY_LIMIT = FREE_TIER_LIMITS.scans;
 const CACHE_TTL_HOURS = 72; // how long a cached market-research result stays valid for reuse
 
 function normalizeCacheKey(product: string, currency: string, condition: string = "new", specs: string = ""): string {
@@ -300,10 +301,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await admin.from("users").update({ scans_used_this_month: 0, scans_reset_at: now.toISOString() }).eq("id", user.id);
       }
 
-      if (tier === "free" && scansUsed >= FREE_MONTHLY_LIMIT) {
-        quotaOk = false;
-      }
-      if (tier === "premium" && scansUsed >= PREMIUM_MONTHLY_LIMIT) {
+      // Section 15: Use dynamic limits from user row (stored when plan was activated)
+      const scansLimit = tier === "premium" ? (userRow.scans_limit_this_month || DEFAULT_PREMIUM_LIMITS.scans) : FREE_MONTHLY_LIMIT;
+      
+      if (scansUsed >= scansLimit) {
         quotaOk = false;
       }
 

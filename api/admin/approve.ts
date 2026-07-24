@@ -3,24 +3,7 @@ import { isValidAdmin } from "./_auth.js";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
 import { sendEmail } from "../_resend.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "../_logger.js";
-
-interface PlanConfig {
-  tier: string;
-  days: number | null; // null means no expiration
-  scans: number;
-  chatMessages: number;
-  compares: number;
-  priceAlerts: number;
-  canExportPdf: boolean;
-}
-
-const PLAN_CONFIGS: Record<string, PlanConfig> = {
-  small_bundle: { tier: "premium", days: null, scans: 3, chatMessages: 45, compares: 0, priceAlerts: 0, canExportPdf: false },
-  medium_bundle: { tier: "premium", days: null, scans: 6, chatMessages: 90, compares: 0, priceAlerts: 0, canExportPdf: false },
-  large_bundle: { tier: "premium", days: null, scans: 10, chatMessages: 150, compares: 0, priceAlerts: 0, canExportPdf: false },
-  smart_shopper: { tier: "premium", days: 30, scans: 50, chatMessages: 150, compares: 10, priceAlerts: 20, canExportPdf: false },
-  power_buyer: { tier: "premium", days: 30, scans: 100, chatMessages: 400, compares: 25, priceAlerts: 50, canExportPdf: true },
-};
+import { getPlanConfig } from "../_planConfig.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const start = Date.now();
@@ -64,34 +47,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(409).json({ error: "already_reviewed" });
     }
     
-    const planConfig = PLAN_CONFIGS[reqRow.plan];
+    // Section 15: Use centralized plan config (single source of truth)
+    const planConfig = getPlanConfig(reqRow.plan);
     if (!planConfig) {
       console.error("[/api/admin/approve] unknown plan:", reqRow.plan);
       return res.status(400).json({ error: "unknown_plan" });
     }
 
     const now = new Date();
-    let endDate = null;
-    if (planConfig.days) {
-      endDate = new Date(now.getTime() + planConfig.days * 24 * 60 * 60 * 1000);
-    }
+    // All subscription plans are one-time purchases (no auto-renewal) for now
+    const endDate = null;
 
     const { data: beforeUser } = await admin.from("users").select("*").eq("id", reqRow.user_id).single();
 
     console.log("Saving database...");
     const updateData: any = {
-      tier: planConfig.tier,
+      tier: "premium",
       current_plan_name: reqRow.plan,
       subscription_start_date: now.toISOString(),
-      subscription_end_date: endDate ? endDate.toISOString() : null,
-      chat_messages_limit: planConfig.chatMessages,
-      price_alerts_limit: planConfig.priceAlerts,
-      can_export_pdf: planConfig.canExportPdf,
+      subscription_end_date: endDate,
+      // Section 15: Store plan limits from centralized config
+      scans_limit_this_month: planConfig.limits.scans,
+      compares_limit_this_month: planConfig.limits.compares,
+      chat_messages_limit: planConfig.limits.chatMessages,
+      price_alerts_limit: 0,
+      can_export_pdf: false,
     };
 
-    // If it's a one-time bundle, we might want to ADD to existing scans instead of overwriting
-    // For simplicity here, we'll overwrite as per typical "buy this bundle" logic
-    // But we'll reset the usage counters
+    // Reset usage counters when a new plan is activated
     updateData.scans_used_this_month = 0;
     updateData.compares_used_this_month = 0;
     updateData.chat_messages_used = 0;

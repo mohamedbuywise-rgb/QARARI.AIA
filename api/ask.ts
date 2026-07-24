@@ -3,28 +3,20 @@ import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { callAiWithFallback } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
+import { FREE_TIER_LIMITS, DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
 
 // Hard cap on how many chat questions can be asked per analysis (Free/guest
-// tier only — Premium uses PREMIUM_CHAT_MONTHLY_LIMIT below instead). Each
+// tier only — Premium uses dynamic limit from user row). Each
 // question is a Groq call WITHOUT a Tavily search (unlike the main
 // analysis) — plain reasoning over the existing report context only —
 // so the per-message cost is low enough to allow a much higher cap.
 const MAX_CHAT_MESSAGES_PER_REPORT = 20;
 
-// Open shopping advisor mode (no report context required), Free/guest tier
-// cap per month — Premium uses PREMIUM_CHAT_MONTHLY_LIMIT below instead.
-const MAX_ADVISOR_MESSAGES_PER_MONTH_FREE = 20;
+// Section 15: Free tier advisor chat limit from centralized config
+const MAX_ADVISOR_MESSAGES_PER_MONTH_FREE = FREE_TIER_LIMITS.chatMessages;
 
-// Premium subscribers used to get truly unlimited chat (both "report" mode
-// and "advisor" mode combined) — since every message is still a real Groq
-// call, that left the AI Cost Dashboard with zero ceiling on a single
-// subscriber's cost. This is a fair-use cap in the same spirit as
-// COMPARE_MONTHLY_LIMIT in /api/compare.ts: generous enough that no normal
-// user will ever hit it, but it guarantees the worst case is bounded.
-// Tracked on users.premium_chat_used_this_month / premium_chat_reset_at
-// (see supabase-premium-chat-limit-migration.sql), shared across BOTH chat
-// modes so it can't be doubled up by mixing report-chat and advisor-chat.
-const PREMIUM_CHAT_MONTHLY_LIMIT = 150;
+// Section 15: Default premium chat limit (used as fallback if user row doesn't have dynamic limit)
+const DEFAULT_PREMIUM_CHAT_MONTHLY_LIMIT = DEFAULT_PREMIUM_LIMITS.chatMessages;
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -72,7 +64,10 @@ ${historyBlock || "(New conversation)"}
 
 USER'S QUESTION: ${question}
 
-${languageInstruction} Be conversational, warm, and helpful. Keep answers to 3-5 sentences. If you suggest products, mention realistic price ranges. Always end with a helpful proactive tip or suggestion.`;
+${languageInstruction} Be conversational, warm, and helpful. Keep answers to 3-5 sentences. If you suggest products, mention realistic price ranges. Always end with a helpful proactive tip or suggestion.
+
+Return a JSON object with EXACTLY this shape and nothing else:
+{ "answer": string }`;
 }
 
 function buildChatPrompt(opts: {
@@ -201,10 +196,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let maxMessages = mode === "advisor" ? MAX_ADVISOR_MESSAGES_PER_MONTH_FREE : MAX_CHAT_MESSAGES_PER_REPORT;
 
     if (isPremiumTier) {
-      // Premium: one shared 150/month counter across report-chat AND
-      // advisor-chat, stored on the users row (same reset pattern
-      // /api/compare.ts uses for compares_used_this_month).
-      maxMessages = PREMIUM_CHAT_MONTHLY_LIMIT;
+      // Section 15: Premium: use dynamic limit from user row (stored when plan was activated)
+      // Shared counter across report-chat AND advisor-chat (same reset pattern as compares).
+      maxMessages = DEFAULT_PREMIUM_CHAT_MONTHLY_LIMIT;
       console.log("[/api/ask] Loading premium chat usage for user:", user!.id);
       const { data: premiumRow } = await admin
         .from("users")
