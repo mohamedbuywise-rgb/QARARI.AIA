@@ -3,7 +3,7 @@ import { FutureValueCard } from "@/components/FutureValueCard";
 import { useApp } from "@/lib/AppContext";
 import { supabase } from "@/lib/supabase";
 import { getCategoryIcon } from "@/lib/categoryIcons";
-import { currencies, SHOW_BTECH_COMPARISON } from "@/lib/types";
+import { currencies } from "@/lib/types";
 import type { Verdict } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,91 +12,9 @@ import {
   Shield, Lightbulb, Copy, Share2, Bookmark, Bell,
   ThumbsUp, ThumbsDown, MessageCircle, Mic, Send,
   Sparkles, GitCompare, Crown, Users, RefreshCw, DollarSign, Handshake,
-  ExternalLink,
+  ExternalLink, ShoppingBag,
 } from "lucide-react";
-
-// ---- Retailer price comparison (Jumia/Noon/optionally B.TECH) ----
-// Renders only when the report carries 2+ matched retailer prices (built
-// server-side in api/analyze.ts from the same market-search results already
-// fetched for pricing — no extra API cost per view).
-function RetailerPriceComparison({
-  retailerPrices,
-  lang,
-  cShort,
-  fmtPrice,
-}: {
-  retailerPrices: { retailer: string; price: number; url: string; currency?: string }[];
-  lang: "ar" | "en";
-  cShort?: string;
-  fmtPrice: (n: unknown) => string;
-}) {
-  const visiblePrices = retailerPrices.filter(
-    (rp) => SHOW_BTECH_COMPARISON || rp.retailer.toUpperCase() !== "B.TECH"
-  );
-
-  if (visiblePrices.length < 2) return null;
-
-  const cheapest = visiblePrices.reduce((min, rp) => (rp.price < min.price ? rp : min), visiblePrices[0]);
-
-  return (
-    <div className="mb-4 rounded-xl border border-amber-500/15 bg-[#0B0B0F] p-5">
-      <h2 className="flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
-        <Search className="h-5 w-5" />
-        {lang === "ar" ? "بحثنالك على أفضل سعر متاح" : "We searched for the best available price"}
-      </h2>
-      <p className="mt-1 mb-4 text-xs text-zinc-500">
-        {lang === "ar"
-          ? "قارنّا السعر ده في أكبر المتاجر المصرية عشانك، آخر تحديث النهارده"
-          : "We compared this price across the biggest Egyptian retailers for you, last checked today"}
-      </p>
-
-      <div className="space-y-2.5">
-        {visiblePrices.map((rp, i) => {
-          const isCheapest = rp.retailer === cheapest.retailer && rp.price === cheapest.price;
-          return (
-            <a
-              key={i}
-              href={rp.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`flex items-center justify-between rounded-xl border p-3.5 transition-colors ${
-                isCheapest
-                  ? "border-emerald-400/40 bg-emerald-500/10 hover:bg-emerald-500/15"
-                  : "border-zinc-700 bg-zinc-800/40 hover:bg-zinc-800/70"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-600 text-xs font-bold text-[#0B0B0F]">
-                  {rp.retailer.slice(0, 2).toUpperCase()}
-                </span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-zinc-100">{rp.retailer}</span>
-                    {isCheapest && (
-                      <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 ring-1 ring-emerald-500/30">
-                        {lang === "ar" ? "أفضل سعر" : "Best price"}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-base font-bold text-amber-400">
-                    {fmtPrice(rp.price)} {cShort}
-                  </span>
-                </div>
-              </div>
-              <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
-            </a>
-          );
-        })}
-      </div>
-
-      <p className="mt-3.5 text-[11px] leading-relaxed text-zinc-500">
-        {lang === "ar"
-          ? "الأسعار من المتاجر مباشرة وممكن تتغير. بعض الروابط شراكة تجارية — ده مش بيأثر على السعر اللي هتدفعه ولا على ترتيب أو تقييم 'قرار' للصفقة. الأسعار المعروضة هي آخر سعر اتفحص مش سعر لحظي مضمون 100%."
-          : "Prices come directly from retailers and may change. Some links are commercial partnerships — this doesn't affect the price you pay or Qarari's ranking or rating of the deal. Prices shown are the last checked price, not a guaranteed real-time price."}
-      </p>
-    </div>
-  );
-}
+import { SHOW_BTECH_COMPARISON } from "@/lib/types";
 
 export function ReportScreen() {
   const { t, lang, dir, currentReport, navigate, saveToHistory, history, user, session, showToast, isPremium, requireAuth } = useApp();
@@ -154,6 +72,80 @@ export function ReportScreen() {
   const vc = verdictConfig[report.verdict] ?? verdictConfig.fair;
 
   const ProductIcon = useMemo(() => getCategoryIcon(report.product), [report.product]);
+
+  // Section 17: Retailer Price Comparison Component
+  const RetailerPriceComparison = () => {
+    if (!report.retailerPrices || report.retailerPrices.length < 1) return null;
+
+    // Filter by feature flag for B.TECH
+    const visibleRetailers = report.retailerPrices.filter(
+      (rp) => rp.retailer !== "B.TECH" || SHOW_BTECH_COMPARISON
+    );
+
+    if (visibleRetailers.length === 0) return null;
+
+    const lowestPrice = Math.min(...visibleRetailers.map((rp) => rp.price));
+
+    return (
+      <div className="mb-4 rounded-xl border border-amber-500/15 bg-zinc-900/60 p-5">
+        <div className="mb-4">
+          <h2 className="flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
+            <ShoppingBag className="h-5 w-5" /> {lang === "ar" ? "بحثنالك على أفضل سعر متاح" : "We found the best price for you"}
+          </h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            {lang === "ar" 
+              ? "قارنّا السعر ده في أكبر المتاجر المصرية عشانك، آخر تحديث النهارده" 
+              : "We compared this price across major Egyptian retailers for you, last updated today"}
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {visibleRetailers.map((rp, i) => {
+            const isLowest = rp.price === lowestPrice;
+            return (
+              <a
+                key={i}
+                href={rp.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`group relative flex items-center gap-3 rounded-xl border p-4 transition-all hover:bg-zinc-800/50 ${
+                  isLowest 
+                    ? "border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]" 
+                    : "border-zinc-800 bg-zinc-800/20"
+                }`}
+              >
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                  isLowest ? "bg-emerald-500 text-white" : "bg-zinc-700 text-zinc-300"
+                }`}>
+                  {rp.retailer.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-zinc-100">{rp.retailer}</span>
+                    {isLowest && (
+                      <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                        {lang === "ar" ? "أفضل سعر" : "Best Price"}
+                      </span>
+                    )}
+                  </div>
+                  <p className={`text-lg font-black ${isLowest ? "text-emerald-400" : "text-zinc-100"}`}>
+                    {rp.price.toLocaleString()} <span className="text-xs font-normal opacity-70">{cShort}</span>
+                  </p>
+                </div>
+                <ExternalLink className="h-4 w-4 text-zinc-600 transition-colors group-hover:text-amber-400" />
+              </a>
+            );
+          })}
+        </div>
+
+        <p className="mt-4 text-[10px] leading-relaxed text-zinc-600 italic">
+          {lang === "ar" 
+            ? "الأسعار من المتاجر مباشرة وممكن تتغير. بعض الروابط شراكة تجارية — ده مش بيأثر على السعر اللي هتدفعه ولا على ترتيب أو تقييم 'قرار' للصفقة. الأسعار المعروضة هي آخر سعر اتفحص."
+            : "Prices are directly from retailers and may change. Some links are affiliate — this does not affect the price you pay or 'Qarari's' ranking/evaluation. Prices shown are the last checked prices."}
+        </p>
+      </div>
+    );
+  };
 
   const handleSave = () => {
     requireAuth(async () => {
@@ -364,16 +356,8 @@ export function ReportScreen() {
         )}
       </div>
 
-      {/* Retailer Price Comparison — Jumia/Noon/optionally B.TECH, built
-          server-side from the same market-search results, no extra cost */}
-      {report.retailerPrices && report.retailerPrices.length > 1 && (
-        <RetailerPriceComparison
-          retailerPrices={report.retailerPrices}
-          lang={lang}
-          cShort={cShort}
-          fmtPrice={fmtPrice}
-        />
-      )}
+      {/* Retailer Price Comparison (Section 17) */}
+      <RetailerPriceComparison />
 
       {/* Community Radar — REAL data with enhanced social proof */}
       {report.communityInsights && report.communityInsights.analyzedCount >= 3 && (

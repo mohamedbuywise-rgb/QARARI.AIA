@@ -360,11 +360,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let parsed: any;
     let modelUsed: string;
+    let retailerPrices = []; // Section 17: Retailer price comparison
 
     if (cachedRow) {
       // Cache hit — skip the AI pipeline entirely, no token cost, no search cost.
       parsed = cachedRow.parsed;
       modelUsed = cachedRow.model_used;
+      retailerPrices = parsed.retailerPrices || []; // Section 17: Load from cache
       console.log("[/api/analyze] Using cached analysis. modelUsed:", modelUsed);
     } else {
       // ---- Call Groq + Tavily (Section 6 + Section 14A tier branching + Section 2 fallback) ----
@@ -386,15 +388,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
-      // ---- Retailer price comparison (Jumia/Noon/optionally B.TECH) ----
-      // Built from the marketplace search results the AI pipeline already
-      // fetched (Search 2) — no extra Serper call. Stored on `parsed` so it
-      // rides along with the cached analysis on future cache hits too.
-      try {
-        parsed.retailerPrices = extractRetailerPrices(aiResult.retailerSearchResults || [], aiResult.currency || currency);
-      } catch (e) {
-        console.error("[/api/analyze] Retailer price extraction failed (non-fatal):", e);
-        parsed.retailerPrices = [];
+      // Section 17: Extract direct retailer prices from search results
+      if (aiResult.searchResults) {
+        try {
+          retailerPrices = await extractRetailerPrices(
+            aiResult.searchResults,
+            currency,
+            condition
+          );
+          // Store in parsed so it gets cached
+          parsed.retailerPrices = retailerPrices;
+        } catch (e) {
+          console.error("[/api/analyze] Retailer price extraction failed (non-fatal):", e);
+        }
       }
 
       // ---- Enrich betterAlternatives with real, condition-matched prices ----
@@ -508,6 +514,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       currency,
       condition,
       ...parsed,
+      retailerPrices, // Section 17: Add retailer prices to final result
       marketFairPriceMid,
       moneySaved,
       communityInsights,

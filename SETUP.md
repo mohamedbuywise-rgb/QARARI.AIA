@@ -52,10 +52,7 @@ ADMIN_USERNAME=your_admin_username
 ADMIN_PASSWORD=your_admin_password
 CRON_SECRET=any_long_random_string_you_make_up
 VITE_ADMIN_ROUTE_SLUG=a_hard_to_guess_slug_like_qarari-2511k26x
-SHOW_BTECH_COMPARISON=false
 ```
-
-`SHOW_BTECH_COMPARISON` (optional, defaults to off) controls whether B.TECH appears as a card in the retailer price comparison on the report screen. Leave it `false`/unset until a B.TECH affiliate deal is confirmed, then set it to `true`.
 
 `VITE_ADMIN_ROUTE_SLUG` is optional but recommended: it moves the Admin Dashboard from the guessable `/admin` to a secret path of your choosing (e.g. `/qarari-2511k26x`). It must have the `VITE_` prefix (unlike the other admin vars) because the router needs to read it in the browser to know which path to render the dashboard on. If you don't set it, the dashboard falls back to `/admin`.
 
