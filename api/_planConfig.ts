@@ -30,11 +30,11 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
     price: 49,
     currency: "EGP",
     limits: {
-      scans: 3,
+      scans: 4,
       compares: 0,
       chatMessages: 45,
     },
-    description: "3 analyses, 45 chat messages",
+    description: "4 analyses, 45 chat messages",
   },
   medium_bundle: {
     id: "medium_bundle",
@@ -43,11 +43,11 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
     price: 79,
     currency: "EGP",
     limits: {
-      scans: 6,
+      scans: 7,
       compares: 0,
       chatMessages: 90,
     },
-    description: "6 analyses, 90 chat messages",
+    description: "7 analyses, 90 chat messages",
   },
   large_bundle: {
     id: "large_bundle",
@@ -56,11 +56,11 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
     price: 119,
     currency: "EGP",
     limits: {
-      scans: 10,
+      scans: 11,
       compares: 0,
       chatMessages: 150,
     },
-    description: "10 analyses, 150 chat messages",
+    description: "11 analyses, 150 chat messages",
   },
   smart_shopper: {
     id: "smart_shopper",
@@ -69,11 +69,11 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
     price: 150,
     currency: "EGP",
     limits: {
-      scans: 50,
-      compares: 10,
+      scans: 16,
+      compares: 3,
       chatMessages: 150,
     },
-    description: "50 analyses, 10 comparisons, 150 chat messages",
+    description: "16 analyses, 3 comparisons, 150 chat messages",
   },
   power_buyer: {
     id: "power_buyer",
@@ -82,11 +82,11 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
     price: 300,
     currency: "EGP",
     limits: {
-      scans: 100,
-      compares: 25,
+      scans: 30,
+      compares: 8,
       chatMessages: 400,
     },
-    description: "100 analyses, 25 comparisons, 400 chat messages",
+    description: "30 analyses, 8 comparisons, 400 chat messages",
   },
 };
 

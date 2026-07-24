@@ -47,3 +47,23 @@
 - **ملف:** `src/lib/types.ts` — إضافة "advisor" للـ Screen type
 - العميل يقدر يسأل: "معايا 30 ألف وعايز لابتوب للدراسة" أو "إيه أحسن موبايل كاميرا في 25 ألف؟"
 - المساعد يرد بنصائح شخصية وأسعار حقيقية
+
+## تحديث خطط الاشتراك ومقارنة أسعار المتاجر (هذا التحديث)
+
+### 1. تحديث أرقام خطط الاشتراك — `api/_planConfig.ts`
+| الخطة | السعر | تحاليل | مقارنات | رسائل شات |
+|-------|-------|--------|---------|-----------|
+| small_bundle | 49 | 4 | 0 | 45 |
+| medium_bundle | 79 | 7 | 0 | 90 |
+| large_bundle | 119 | 11 | 0 | 150 |
+| smart_shopper | 150 | 16 | 3 | 150 |
+| power_buyer | 300 | 30 | 8 | 400 |
+
+تم تحديث حقل `description` لكل باقة ليعكس الأرقام الجديدة.
+
+### 2. مقارنة أسعار المتاجر داخل ReportScreen
+- **`api/_groq_tavily.ts`**: دالة جديدة `extractRetailerPrices()` تستخرج أرخص سعر ورابط مباشر من نتايج "Search 2: Largest Marketplace" الموجودة أصلاً (بدون أي Serper إضافي) لكل من Jumia وNoon (وB.TECH لو `SHOW_BTECH_COMPARISON=true`)، مع استبعاد amazon.eg تمامًا. `smartAdaptiveSearch` بترجع دلوقتي `retailerSearchResults` كجزء من الـ return، و`callAiWithFallback` بيمررها للخارج.
+- **`api/analyze.ts`**: بينادي `extractRetailerPrices` بعد نتيجة الـ AI ويخزنها في `parsed.retailerPrices` (فبتترخزن مع الكاش كمان).
+- **`src/lib/types.ts`**: حقل جديد `retailerPrices?` في `AnalysisResult`، وثابت `SHOW_BTECH_COMPARISON` (حاليًا `false`).
+- **`src/components/ReportScreen.tsx`**: كومبوننت جديد `RetailerPriceComparison` يظهر تحت "Market Overview" لو فيه أكتر من متجر، بنفس ثيم الموقع (خلفية داكنة، amber/gold، RTL)، مع badge أخضر لأرخص سعر، وتنبيه واضح إن الأسعار "آخر سعر اتفحص" وممكن تتغير.
+- **`SETUP.md`**: توثيق env var اختياري جديد `SHOW_BTECH_COMPARISON`.

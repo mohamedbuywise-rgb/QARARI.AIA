@@ -82,8 +82,17 @@ export interface AnalysisResult {
   resaleValueRightNow?: number | null;
   resaleValue2Years?: number | null;
   resaleInsight?: BilingualText;
+  // Per-retailer price comparison (Jumia/Noon/optionally B.TECH), built
+  // server-side from the same market-search results used for pricing —
+  // no extra API cost. Empty/absent when fewer than 2 retailers matched.
+  retailerPrices?: { retailer: string; price: number; url: string; currency?: string }[];
   createdAt: number;
 }
+
+// Feature flag mirroring api/_groq_tavily.ts's SHOW_BTECH_COMPARISON — flip
+// this once a B.TECH affiliate/commission deal is confirmed. Kept as a
+// simple constant since the frontend can't read server env vars directly.
+export const SHOW_BTECH_COMPARISON = false;
 
 export interface CompareRow {
   category: BilingualText;

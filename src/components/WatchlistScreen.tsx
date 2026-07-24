@@ -40,6 +40,7 @@ export function WatchlistScreen() {
         .from("watchlist")
         .select("*")
         .eq("user_id", user!.id)
+        .eq("active", true)
         .order("created_at", { ascending: false });
       if (!cancelled) {
         if (!error && data) setRows(data as WatchlistRow[]);

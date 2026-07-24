@@ -170,12 +170,12 @@ export function InputScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!product.trim() || !price.trim()) {
-      showToast(lang === "ar" ? "اكتب اسم المنتج والسعر" : "Enter product name and price");
-      return;
-    }
     if (quotaExceeded) {
       navigate("upgrade");
+      return;
+    }
+    if (!product.trim() || !price.trim()) {
+      showToast(lang === "ar" ? "اكتب اسم المنتج والسعر" : "Enter product name and price");
       return;
     }
     setLoading(true);
