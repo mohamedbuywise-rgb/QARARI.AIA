@@ -43,7 +43,7 @@ const variantMap: VariantGroup[] = [
   {
     keywords: ["tv", "television", "تليفزيون", "شاشة"],
     chipGroups: [
-      { label: { ar: "المقاس", en: "Screen size" }, options: ["43\"", "50\"", "55\"", "65\"", "75\""] },
+      { label: { ar: "المقاس", en: "Screen size" }, options: ["43\"", "50\"", "55\"", "65\"", "75\"", "85\"", "98\""] },
     ],
   },
   {

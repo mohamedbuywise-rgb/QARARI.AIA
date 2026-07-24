@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Sparkles, Mail, Lock, ChevronLeft, User } from "lucide-react";
 
 export function LoginScreen() {
-  const { t, lang, dir, navigate, signIn, signUp, showToast, pendingAction, setPendingAction } = useApp();
+  const { t, lang, dir, navigate, signIn, signUp, showToast, pendingAction, setPendingAction, currentReport } = useApp();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,12 +57,12 @@ export function LoginScreen() {
       pendingAction();
       setPendingAction(null);
     } else {
-      navigate("input");
+      navigate(currentReport ? "report" : "input");
     }
   };
 
   const handleGuest = () => {
-    navigate("input");
+    navigate(currentReport ? "report" : "input");
   };
 
   return (
@@ -158,7 +158,7 @@ export function LoginScreen() {
       </div>
 
       <button
-        onClick={() => navigate("input")}
+        onClick={() => navigate(currentReport ? "report" : "input")}
         className="mt-6 flex items-center gap-1 text-sm text-zinc-500 hover:text-amber-400"
       >
         {dir === "rtl" ? <ChevronLeft className="h-4 w-4 rotate-180" /> : <ChevronLeft className="h-4 w-4" />}

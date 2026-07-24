@@ -12,7 +12,7 @@ interface ChatMessage {
 }
 
 export function AdvisorScreen() {
-  const { t, lang, dir, navigate, session, isPremium, showToast, requireAuth, user } = useApp();
+  const { t, lang, dir, session, isPremium } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -39,25 +39,10 @@ export function AdvisorScreen() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  const handleSend = () => {
-    if (!input.trim() || loading) return;
-    
-    const question = input.trim();
-    
-    // Check auth before sending (Section 7)
-    if (!session?.user) {
-      requireAuth(() => {
-        // This will be called after successful login
-        // But for better UX, we just navigate to login if not authed
-      });
-      return;
-    }
-
+  const sendQuestion = (question: string) => {
     setMessages((prev) => [...prev, { role: "user", content: question }]);
-    setInput("");
     setLoading(true);
-    
-    // Wrap the async call to be safe
+
     (async () => {
       try {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -82,7 +67,7 @@ export function AdvisorScreen() {
           }
           throw new Error(errData.error || "failed");
         }
-        
+
         const data = await res.json();
         if (data.answer) {
           setMessages((prev) => [...prev, { role: "assistant", content: data.answer }]);
@@ -97,6 +82,14 @@ export function AdvisorScreen() {
         setLoading(false);
       }
     })();
+  };
+
+  const handleSend = () => {
+    if (!input.trim() || loading) return;
+
+    const question = input.trim();
+    setInput("");
+    sendQuestion(question);
   };
 
   return (

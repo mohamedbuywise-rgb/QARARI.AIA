@@ -19,6 +19,9 @@ interface AppContextType {
   history: AnalysisResult[];
   saveToHistory: (r: AnalysisResult) => Promise<void>;
   refreshHistory: () => Promise<void>;
+  // Local (device-only) history for guests who haven't created an account
+  // yet — so a report is never truly lost just because they didn't sign up.
+  addToGuestHistory: (r: AnalysisResult) => void;
   user: UserProfile | null;
   session: Session | null;
   authLoading: boolean;
@@ -40,9 +43,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem("qarari-lang");
     return (saved as Language) || "ar";
   });
-  const [screen, setScreen] = useState<Screen>("input");
-  const [currentReport, setCurrentReport] = useState<AnalysisResult | null>(null);
+  const [screen, setScreen] = useState<Screen>(() => {
+    try {
+      const raw = localStorage.getItem("qarari_current_report");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.report && Date.now() - parsed.savedAt < 2 * 60 * 60 * 1000) {
+          return "report";
+        }
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+    return "input";
+  });
+  // Restore the last-viewed report from localStorage so it survives a page
+  // reload or the redirect to /login when saving — this is what fixes the
+  // "report disappears if I don't sign up" bug. Reports older than 2 hours
+  // are treated as stale and dropped, so this never resurrects something old.
+  const [currentReport, setCurrentReportState] = useState<AnalysisResult | null>(() => {
+    try {
+      const raw = localStorage.getItem("qarari_current_report");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.report && Date.now() - parsed.savedAt < 2 * 60 * 60 * 1000) {
+        return parsed.report as AnalysisResult;
+      }
+    } catch {
+      // ignore corrupted storage
+    }
+    return null;
+  });
+  const setCurrentReport = useCallback((r: AnalysisResult | null) => {
+    setCurrentReportState(r);
+    try {
+      if (r) {
+        localStorage.setItem("qarari_current_report", JSON.stringify({ report: r, savedAt: Date.now() }));
+      } else {
+        localStorage.removeItem("qarari_current_report");
+      }
+    } catch {
+      // ignore quota errors
+    }
+  }, []);
   const [currentCompare, setCurrentCompare] = useState<CompareResult | null>(null);
+  const [guestHistory, setGuestHistory] = useState<AnalysisResult[]>(() => {
+    try {
+      const raw = localStorage.getItem("qarari_guest_history");
+      return raw ? (JSON.parse(raw) as AnalysisResult[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [history, setHistory] = useState<AnalysisResult[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -166,7 +218,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setHistory([]);
-  }, []);
+    setCurrentReport(null);
+  }, [setCurrentReport]);
 
   // Section 7 login-gating: run `action` now if signed in, otherwise stash it
   // and redirect to login; LoginScreen's success handler resumes it.
@@ -213,6 +266,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [session, refreshHistory]);
 
+  const addToGuestHistory = useCallback((r: AnalysisResult) => {
+    setGuestHistory((prev) => {
+      const next = [r, ...prev.filter((h) => h.id !== r.id)].slice(0, 15);
+      try {
+        localStorage.setItem("qarari_guest_history", JSON.stringify(next));
+      } catch {
+        // ignore quota errors
+      }
+      return next;
+    });
+  }, []);
+
+  // Guests see their device-local history; signed-in users see their real
+  // synced history from Supabase.
+  const effectiveHistory = session?.user ? history : guestHistory;
+
   const isPremium = user?.tier === "premium";
 
   return (
@@ -220,7 +289,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       lang, setLang, dir, t, screen, navigate,
       currentReport, setCurrentReport,
       currentCompare, setCurrentCompare,
-      history, saveToHistory, refreshHistory,
+      history: effectiveHistory, saveToHistory, refreshHistory,
+      addToGuestHistory,
       user, session, authLoading,
       signUp, signIn, signOut,
       isPremium,

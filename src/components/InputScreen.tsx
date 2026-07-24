@@ -15,7 +15,7 @@ import {
 import { Sparkles, Camera, Upload, X, Crown, GitCompare, RefreshCw, Mic, Send } from "lucide-react";
 
 export function InputScreen() {
-  const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory } = useApp();
+  const { t, lang, navigate, setCurrentReport, isPremium, session, showToast, history, saveToHistory, addToGuestHistory } = useApp();
   const [product, setProduct] = useState("");
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("EGP");
@@ -222,6 +222,10 @@ export function InputScreen() {
       const result = await res.json();
       console.log("FULL AI RESPONSE:", result);
       setCurrentReport(result);
+      // Guests aren't signed in yet, so this can't be saved to Supabase —
+      // keep it in local device history so it's not just gone if they
+      // navigate away without creating an account.
+      if (!session?.user) addToGuestHistory(result);
       setRemaining((r) => (r !== null ? Math.max(0, r - 1) : r));
       navigate("report");
     } catch {

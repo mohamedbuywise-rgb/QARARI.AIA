@@ -424,42 +424,26 @@ export async function enrichAlternativesWithMarketPrices(
   return { enriched: results, searchQueryCount };
 }
 
-export interface RetailerPrice {
+export interface RetailerLink {
   retailer: string;
-  price: number;
   url: string;
-  currency: string;
 }
 
-// Retailers eligible for the ReportScreen price comparison, matched against
-// each result's hostname. B.TECH is included only behind SHOW_BTECH_COMPARISON.
-// amazon.eg is intentionally excluded — it still contributes to the general
-// market-price search, it just never appears in this comparison.
+// Retailers eligible for the ReportScreen "compare prices" links, matched
+// against each result's hostname. B.TECH is included only behind
+// SHOW_BTECH_COMPARISON. We link out to all of these now (including Noon) —
+// since we no longer display a scraped price on the card (that's what was
+// unreliable), there's no price-accuracy risk left in showing the link.
 function getComparisonRetailers(): { domain: string; name: string }[] {
   const retailers = [
     { domain: "jumia.com.eg", name: "Jumia" },
+    { domain: "amazon.eg", name: "Amazon" },
     { domain: "noon.com", name: "Noon" },
   ];
   if (SHOW_BTECH_COMPARISON) {
     retailers.push({ domain: "btech.com", name: "B.TECH" });
   }
   return retailers;
-}
-
-// Same numeric/price-window heuristic as _priceExtraction's extractPrices,
-// kept local (and intentionally simpler — no currency-symbol matching)
-// since here we already know the currency from the query context and just
-// need "the cheapest plausible price mentioned for this specific listing".
-function extractCheapestPriceFromText(text: string): number | null {
-  const numRegex = /\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?/g;
-  let match;
-  let cheapest: number | null = null;
-  while ((match = numRegex.exec(text)) !== null) {
-    const val = parseFloat(match[0].replace(/[,\s]/g, ""));
-    if (val < 10 || val > 20_000_000) continue; // filter out ratings, counts, years, etc.
-    if (cheapest === null || val < cheapest) cheapest = val;
-  }
-  return cheapest;
 }
 
 function hostnameMatches(url: string, domain: string): boolean {
@@ -472,34 +456,24 @@ function hostnameMatches(url: string, domain: string): boolean {
 }
 
 /**
- * Builds a per-retailer price comparison (Jumia, Noon, optionally B.TECH)
- * straight from the Search 2 ("Largest Marketplace") results already
- * fetched by smartAdaptiveSearch — no additional Serper query. Returns the
- * cheapest valid price + direct product URL found for each matched domain,
- * excluding amazon.eg entirely.
+ * Builds a per-retailer link-out list (Jumia, Amazon, Noon, optionally
+ * B.TECH) straight from the Search 2 ("Largest Marketplace") results
+ * already fetched by smartAdaptiveSearch — no additional Serper query, and
+ * no price extraction (that's what made prices unreliable before — this
+ * now just points the user to the store's own listing to compare there).
+ * Takes the first matching result per domain, which reflects Google's own
+ * relevance ranking for that site + product query.
  */
-export function extractRetailerPrices(results: SerperResult[], currency: string): RetailerPrice[] {
+export function extractRetailerLinks(results: SerperResult[]): RetailerLink[] {
   const retailers = getComparisonRetailers();
-  const prices: RetailerPrice[] = [];
+  const links: RetailerLink[] = [];
 
   for (const { domain, name } of retailers) {
-    let best: { price: number; url: string } | null = null;
-
-    for (const r of results) {
-      if (!r.url || !hostnameMatches(r.url, domain)) continue;
-
-      const price = extractCheapestPriceFromText(`${r.title} ${r.content}`);
-      if (price === null) continue;
-
-      if (!best || price < best.price) {
-        best = { price, url: r.url };
-      }
-    }
-
-    if (best) {
-      prices.push({ retailer: name, price: best.price, url: best.url, currency });
+    const match = results.find((r) => r.url && hostnameMatches(r.url, domain));
+    if (match) {
+      links.push({ retailer: name, url: match.url });
     }
   }
 
-  return prices;
+  return links;
 }

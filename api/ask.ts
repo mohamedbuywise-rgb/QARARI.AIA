@@ -163,11 +163,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const user = await getAuthedUser(req);
     console.log("Authentication OK. Signed in:", !!user, user ? `(userId: ${user.id})` : "(guest)");
 
-    // Advisor mode with smart memory requires login to save interests
-    if (mode === "advisor" && !user) {
-      console.warn("[/api/ask] Advisor mode requires authentication for smart memory features");
-      return res.status(401).json({ error: "auth_required_for_advisor", message: "Please sign in to use smart memory features" });
-    }
+    // Advisor mode now works for guests too — quota is tracked by IP-based
+    // identity below, same as report-mode chat. Smart-memory (remembering
+    // interests) still only applies to signed-in users, further down.
 
     const identity = user
       ? `user:${user.id}`

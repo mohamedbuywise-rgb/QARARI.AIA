@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
-import { callAiWithFallback, enrichAlternativesWithMarketPrices, extractRetailerPrices } from "./_groq_tavily.js";
+import { callAiWithFallback, enrichAlternativesWithMarketPrices, extractRetailerLinks } from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 import { FREE_TIER_LIMITS, DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
@@ -386,15 +386,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
-      // ---- Retailer price comparison (Jumia/Noon/optionally B.TECH) ----
+      // ---- Retailer shopping links (Jumia/Noon/Amazon/optionally B.TECH) ----
       // Built from the marketplace search results the AI pipeline already
-      // fetched (Search 2) — no extra Serper call. Stored on `parsed` so it
-      // rides along with the cached analysis on future cache hits too.
+      // fetched (Search 2) — no extra Serper call, and no price shown (that
+      // was the unreliable part). Stored on `parsed` so it rides along with
+      // the cached analysis on future cache hits too.
       try {
-        parsed.retailerPrices = extractRetailerPrices(aiResult.retailerSearchResults || [], aiResult.currency || currency);
+        parsed.retailerLinks = extractRetailerLinks(aiResult.retailerSearchResults || []);
       } catch (e) {
-        console.error("[/api/analyze] Retailer price extraction failed (non-fatal):", e);
-        parsed.retailerPrices = [];
+        console.error("[/api/analyze] Retailer link extraction failed (non-fatal):", e);
+        parsed.retailerLinks = [];
       }
 
       // ---- Enrich betterAlternatives with real, condition-matched prices ----

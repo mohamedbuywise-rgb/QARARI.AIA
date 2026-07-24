@@ -95,37 +95,22 @@ export function GuideScreen() {
       </div>
 
       {/* Premium Benefits */}
-      <div className="mb-8 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/5 to-transparent p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <Crown className="h-6 w-6 text-amber-400" />
-          <h2 className="font-serif text-xl font-bold text-amber-400">
-            {lang === "ar" ? "✨ ما الذي تحصل عليه مع البريميوم؟" : "✨ What You Get with Premium?"}
-          </h2>
-        </div>
-        <div className="space-y-2.5">
-          {[
-            {
-              ar: "✅ 50 تحليل شهري (بدل 5 في المجاني)",
-              en: "✅ 50 analyses per month (vs 5 free)",
-            },
-            {
-              ar: "✅ 10 مقارنات شهرية (ميزة بريميوم فقط)",
-              en: "✅ 10 comparisons per month (premium only)",
-            },
-            {
-              ar: "✅ 150 رسالة شات شهريًا مع المساعد الشخصي",
-              en: "✅ 150 chat messages/month with personal advisor",
-            },
-            {
-              ar: "✅ ذاكرة ذكية تتذكر اهتماماتك وتقدم نصائح مخصصة",
-              en: "✅ Smart memory that remembers your interests",
-            },
-          ].map((item, i) => (
-            <p key={i} className="text-sm text-zinc-300">
-              {lang === "ar" ? item.ar : item.en}
-            </p>
-          ))}
-        </div>
+      <div className="mb-8 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/5 to-transparent p-6 text-center">
+        <Crown className="mx-auto mb-3 h-8 w-8 text-amber-400" />
+        <h2 className="font-serif text-xl font-bold text-amber-400">
+          {lang === "ar" ? "افتح كل إمكانيات قراري" : "Unlock the full power of Qarari"}
+        </h2>
+        <p className="mt-2 text-sm text-zinc-400">
+          {lang === "ar"
+            ? "تحليلات ومقارنات ورسائل أكتر مع المساعد الذكي، وذاكرة تتذكر اهتماماتك"
+            : "More analyses, comparisons, and advisor messages — plus smart memory that remembers your interests"}
+        </p>
+        <Button
+          onClick={() => navigate("upgrade")}
+          className="mt-5 w-full bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500"
+        >
+          {lang === "ar" ? "👑 اشترك الآن" : "👑 Subscribe Now"}
+        </Button>
       </div>
 
       {/* How It Works */}

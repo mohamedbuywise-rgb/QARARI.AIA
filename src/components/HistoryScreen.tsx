@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Search, ChevronLeft, TrendingUp, TrendingDown, Calendar, Flame, Package } from "lucide-react";
 
 export function HistoryScreen() {
-  const { t, lang, dir, history, navigate, setCurrentReport, user } = useApp();
+  const { t, lang, dir, history, navigate, setCurrentReport, user, session } = useApp();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | Verdict>("all");
 
@@ -75,6 +75,19 @@ export function HistoryScreen() {
         </button>
         <h1 className="font-serif text-2xl font-bold text-amber-400">{t("historyTitle")}</h1>
       </div>
+
+      {!session?.user && (
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <p className="text-xs text-zinc-400">
+            {lang === "ar"
+              ? "السجل ده محفوظ على جهازك بس. اعمل حساب عشان يتحفظ بشكل دائم وتقدر توصله من أي جهاز."
+              : "This history is saved only on this device. Create an account to keep it permanently and access it from any device."}
+          </p>
+          <Button onClick={() => navigate("login")} className="shrink-0 bg-amber-500 text-[#0B0B0F] hover:bg-amber-400">
+            {t("signup")}
+          </Button>
+        </div>
+      )}
 
       {/* Stats Row */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
