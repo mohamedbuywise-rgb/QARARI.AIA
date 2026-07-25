@@ -324,6 +324,15 @@ const CURRENCY_GROQ_COUNTRY: Record<string, string> = {
   EUR: "Germany",
 };
 
+// Compound's own web-search tool is billed per search + per token, so unlike
+// the Serper domain lists (which just build display links and cost nothing
+// extra), we deliberately cap this to the 3 stores that actually matter for
+// the price range — dropping btech.com (hidden from the UI behind
+// SHOW_BTECH_COMPARISON anyway, so there's no reason to pay for Compound to
+// search it) and capping at 3 domains total so the tool has a narrower,
+// cheaper search surface instead of fanning out across every marketplace.
+const COMPOUND_MAX_PRICE_DOMAINS = 3;
+
 // Helper that maps a retailer domain to a Groq `search_settings.include_domains`
 // entry. The Groq web-search tool only accepts a plain list of domains (no
 // `site:` prefix), so we strip that when building the settings object.
@@ -334,10 +343,12 @@ function buildGroqSearchSettings(currency: string, condition: "new" | "likeNew" 
   const domains = condition === "new" ? retailers.marketplace : usedSites;
   const settings: Record<string, any> = {};
   if (country) settings.country = country;
-  // For new-condition searches, restrict to known marketplace domains so
-  // Groq's web search doesn't drift into unrelated blogs / forums.
+  // For new-condition searches, restrict to the top 3 known marketplace
+  // domains (excluding btech, see comment above) so Groq's web search
+  // doesn't drift into unrelated blogs/forums AND doesn't burn tokens
+  // checking stores we don't even show a link for.
   if (condition === "new" && domains.length > 0) {
-    settings.include_domains = domains.map((d: string) => d);
+    settings.include_domains = domains.filter((d) => d !== "btech.com").slice(0, COMPOUND_MAX_PRICE_DOMAINS);
   }
   return settings;
 }
@@ -349,6 +360,11 @@ async function callCompoundModel(model: string, system: string, user: string, se
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
     temperature: 0.3,
     max_completion_tokens: 4096,
+    // Only the web_search tool is needed for a price lookup — explicitly
+    // excluding code_interpreter/visit_website stops Compound from running
+    // extra billed tool calls (each is its own line item) that add nothing
+    // for this use case.
+    compound_custom: { tools: { enabled_tools: ["web_search"] } },
   };
   if (searchSettings && Object.keys(searchSettings).length > 0) {
     requestBody.search_settings = searchSettings;
@@ -450,12 +466,18 @@ export async function getFairPriceRangeViaCompound(
   specs: string
 ): Promise<FairPriceRange> {
   const conditionLabel = condition === "used" ? "used/second-hand" : condition === "likeNew" ? "like-new/open-box" : "new";
+  const searchSettings = buildGroqSearchSettings(currency, condition);
+  const targetStores: string[] = Array.isArray(searchSettings.include_domains) ? searchSettings.include_domains : [];
+  const storesLabel = targetStores.length > 0 ? targetStores.join(", ") : "major retailers for this region";
+
   const system = "You are a market-pricing research analyst. You MUST use your web search tool before answering — you are never allowed to answer a pricing question from memory/training data alone, because prices change constantly and yours is out of date. Your final message must contain ONLY a single valid JSON object — no prose, no markdown code fences, no explanation before or after it.";
-  const user = `Use your web search tool NOW to find the CURRENT fair market price range for this exact product in ${currency}, condition: ${conditionLabel}. Do at least one real search before answering — do not skip straight to an answer.
+  const user = `Find the CURRENT fair market price range for this exact product in ${currency}, condition: ${conditionLabel}.
 
 PRODUCT: ${product}${specs ? `\nVARIANT/SPECS: ${specs}` : ""}
 
-Search for real, current retail listings. Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
+Run exactly ONE web search covering these stores only: ${storesLabel}. One well-formed query is enough to see listings from all of them — do not run multiple separate searches or visit additional pages/sites beyond that one search's results; base your answer only on what that single search returns.
+
+Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
 
 After searching, respond with ONLY this JSON shape, nothing else — no markdown table, no citations, no commentary:
 { "min": number | null, "max": number | null, "mid": number | null, "summary": { "ar": string, "en": string } }
@@ -465,7 +487,6 @@ After searching, respond with ONLY this JSON shape, nothing else — no markdown
 - mid: the fair average/midpoint price in ${currency} based on what your search found — calculate this as the midpoint between min and max, or as the most common/representative price you saw. Return null ONLY if you genuinely found no reliable pricing signal.
 - summary: ONE short natural sentence (in both Arabic and English) stating the range you found. If min/max/mid are null, say plainly that no reliable current price was found instead of describing a range.`;
 
-  const searchSettings = buildGroqSearchSettings(currency, condition);
   if (Object.keys(searchSettings).length > 0) {
     console.log(`[getFairPriceRangeViaCompound] search_settings for "${product}":`, JSON.stringify(searchSettings));
   }
