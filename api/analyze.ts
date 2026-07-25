@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import {
   callAnalysisModel,
-  getFairPriceRangeViaCompound,
+  getFairPriceRange,
   fetchMainProductRetailerLinks,
   attachLinksAndPricesToAlternatives,
   attachSearchLinksToAlternatives,
@@ -238,6 +238,7 @@ Rules:
 - resaleValueRightNow: estimate what this product would sell for on the second-hand market RIGHT NOW (in ${currency}), based on brand reputation, current demand, and the offeredPrice of ${offeredPrice} ${currency}. Return null if no reliable data.
 - resaleValue2Years: estimate what this product will be worth on the second-hand market in 2 years from now. Return null if no reliable data.
 - resaleInsight: a bilingual text with a brief insight about the resale value of this product. E.g. in Arabic: "آبل بتحتفظ بقيمة عالية جداً في السوق، بعد سنتين ممكن تبيعه بـ 55% من سعره" and in English: "Apple retains value well in the market, after 2 years you can sell for ~55% of current price."
+- negotiationScript / negotiationScriptVariants (MANDATORY DIRECTION): always write this as a message the USER (the BUYER) would send TO the merchant/seller — over WhatsApp, chat, or in person — to convince them to lower the price based on the fair market price above. It must NEVER be phrased as if the merchant/seller is the one speaking to the buyer.
 - Return ONLY the JSON object, nothing else.`;
 }
 
@@ -385,12 +386,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else {
       const cond: "new" | "likeNew" | "used" = condition === "used" ? "used" : condition === "likeNew" ? "likeNew" : "new";
 
-      // ---- STEP 1: Groq Compound (background, invisible to the client) ----
-      // Sole source of truth for the main product's fair price range. Runs
-      // its own live web search internally — Serper plays no part in this.
-      logStep("Calling Groq Compound for fair price range (background)...");
-      const marketPrice: FairPriceRange = await getFairPriceRangeViaCompound(product, currency, cond, specs);
-      console.log("[/api/analyze] Compound price range:", marketPrice.min, "-", marketPrice.max, "| mid:", marketPrice.mid);
+      // ---- STEP 1: fair price range (background, invisible to the client) ----
+      // Tries Groq Compound first (its own built-in live web search). If
+      // Compound errors out — including the Free Tier's internal
+      // response-size limit on its search tool, which throws a 413
+      // regardless of our own request size — it falls through immediately
+      // to a Serper + gpt-oss-120b pipeline instead of surfacing a failure.
+      logStep("Calling fair price range pipeline (Compound, with Serper+GPT fallback)...");
+      const marketPrice: FairPriceRange = await getFairPriceRange(product, currency, cond, specs);
+      console.log("[/api/analyze] Fair price range:", marketPrice.min, "-", marketPrice.max, "| mid:", marketPrice.mid);
 
       // ---- STEP 2: narrative analysis (verdict, reasoning, pros/cons,
       // hidden risks, alternatives, negotiation, resale) — given the

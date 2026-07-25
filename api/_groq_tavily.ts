@@ -522,6 +522,130 @@ After searching, respond with ONLY this JSON shape, nothing else — no markdown
   return { min: null, max: null, mid: null, summary: null };
 }
 
+/**
+ * The "fiery" fair-price extraction prompt for the Serper + gpt-oss-120b
+ * fallback pipeline. Used ONLY when Groq Compound is unavailable or errors
+ * out (e.g. the Free Tier's internal response-size limit on its search
+ * tool, which throws a 413 regardless of how small our own request is).
+ * Handed raw Serper search snippets and asked to derive the same
+ * marketFairPriceMin/Max/Mid shape Compound would have produced.
+ */
+export function buildSmartSerperPricingPrompt(productName: string, currency: string, serperResultsJson: string): string {
+  return `
+أنت خبير تسعير ذكي جداً ومحلل سوق محترف في السوق المصري. 
+أمامك نتائج بحث حية من محرك Google (عبر Serper) لمنتج: "${productName}" بالعملة (${currency}).
+
+نتائج البحث كالتالي:
+${serperResultsJson}
+
+التعليمات الصارمة لاستخراج السعر العادل (Fair Price Range):
+1. **تصفية دقيقة:** تجاهل تماماً الإعلانات الوهمية، قطع الغيار، الإكسسوارات الرخيصة، أو الأسعار غير المنطقية (مثل 1 جنيه أو أسعار قديمة لا تعبر عن الواقع). التركيز فقط على السعر الفعلي للجهاز الجديد أو المتاح حالياً في المتاجر المذكورة (مثل أمازون، جوميا، نون، إلخ).
+2. **استخراج النطاق:** حدد بدقة ثلاثة أرقام:
+   - marketFairPriceMin: أقل سعر منطقي وموثوق في السوق حالياً.
+   - marketFairPriceMax: أعلى سعر عادل لنفس النسخة بدون مبالغة التجار.
+   - marketFairPriceMid: السعر المتوسط أو المتوقع بدقة شديدة.
+3. **الإخراج البرمجي الصارم:** أجب حصرياً بصيغة JSON نظيفة جداً ودون أي كلام إضافي بالشكل التالي:
+{
+  "marketFairPriceMin": 00000,
+  "marketFairPriceMax": 00000,
+  "marketFairPriceMid": 00000,
+  "confidenceScore": 0.95
+}
+`;
+}
+
+/**
+ * Fallback fair-price pipeline: Serper live search snippets fed into
+ * gpt-oss-120b with buildSmartSerperPricingPrompt. Kicks in only when
+ * Groq Compound (getFairPriceRangeViaCompound) errors out or comes back
+ * empty — never runs alongside Compound, only instead of it.
+ */
+export async function getFairPriceRangeViaSerperFallback(
+  product: string,
+  currency: string,
+  condition: "new" | "likeNew" | "used",
+  specs: string
+): Promise<FairPriceRange> {
+  try {
+    const region = getRegionForCurrency(currency);
+    const searchTerm = buildSearchTerm(product, specs);
+    const { results } = await smartAdaptiveSearch(searchTerm, currency, region, condition);
+
+    if (results.length === 0) {
+      console.warn(`[getFairPriceRangeViaSerperFallback] No Serper results for "${product}" — returning null range.`);
+      return { min: null, max: null, mid: null, summary: null };
+    }
+
+    const serperResultsJson = JSON.stringify(
+      results.slice(0, 15).map((r) => ({ title: r.title, url: r.url, snippet: r.content }))
+    );
+    const prompt = buildSmartSerperPricingPrompt(product, currency, serperResultsJson);
+    const systemPrompt = "You are a professional Egyptian-market pricing analyst. Respond with ONLY a single valid JSON object, no prose, no markdown fences.";
+
+    let json;
+    try {
+      json = await callGroqModel(PRIMARY_MODEL, systemPrompt, prompt);
+    } catch (e) {
+      console.warn(`[getFairPriceRangeViaSerperFallback] Primary model failed for "${product}", trying fallback model:`, e);
+      json = await callGroqModel(FALLBACK_MODEL, systemPrompt, prompt);
+    }
+
+    const parsed = loggedJsonParse(`serperFallback.price[${product}]`, extractJsonObject(json.choices[0].message.content));
+    const min = typeof parsed?.marketFairPriceMin === "number" ? parsed.marketFairPriceMin : null;
+    const max = typeof parsed?.marketFairPriceMax === "number" ? parsed.marketFairPriceMax : null;
+    const mid =
+      typeof parsed?.marketFairPriceMid === "number"
+        ? parsed.marketFairPriceMid
+        : min !== null && max !== null
+        ? Math.round((min + max) / 2)
+        : null;
+
+    const summary =
+      min !== null && max !== null
+        ? {
+            ar: `بناءً على نتائج البحث الحية، يتراوح السعر العادل لـ ${product} حالياً بين ${min} و${max} ${currency}.`,
+            en: `Based on live search results, the current fair price range for ${product} is between ${min} and ${max} ${currency}.`,
+          }
+        : null;
+
+    console.log(`[getFairPriceRangeViaSerperFallback] "${product}": min=${min} max=${max} mid=${mid}`);
+    return { min, max, mid, summary };
+  } catch (e) {
+    console.error(`[getFairPriceRangeViaSerperFallback] Fallback pipeline failed for "${product}" (non-fatal):`, e);
+    return { min: null, max: null, mid: null, summary: null };
+  }
+}
+
+/**
+ * Combined entry point for the main product's fair price range, and the
+ * ONLY function api/analyze.ts should call for this purpose.
+ *
+ * 1. Try Groq Compound first (getFairPriceRangeViaCompound) — its own
+ *    built-in live web search.
+ * 2. If Compound throws (including the Free Tier's internal search-tool
+ *    response-size limit, which surfaces as a 413 regardless of our own
+ *    request size) OR comes back with no usable range at all, fall
+ *    through immediately to the Serper + gpt-oss-120b smart pipeline
+ *    instead of surfacing a failure or a null price to the user.
+ */
+export async function getFairPriceRange(
+  product: string,
+  currency: string,
+  condition: "new" | "likeNew" | "used",
+  specs: string
+): Promise<FairPriceRange> {
+  try {
+    const compoundResult = await getFairPriceRangeViaCompound(product, currency, condition, specs);
+    if (compoundResult.min !== null || compoundResult.max !== null) {
+      return compoundResult;
+    }
+    console.warn(`[getFairPriceRange] Compound returned no usable range for "${product}" — falling back to Serper + GPT pipeline.`);
+  } catch (e) {
+    console.error(`[getFairPriceRange] Compound threw for "${product}" — falling back to Serper + GPT pipeline:`, e);
+  }
+  return getFairPriceRangeViaSerperFallback(product, currency, condition, specs);
+}
+
 export async function callAiWithFallback(
   prompt: string,
   imageBase64?: any,
