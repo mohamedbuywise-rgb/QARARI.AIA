@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError } from "./_logger.js";
 
-const FREE_MONTHLY_LIMIT = 5;
+const FREE_MONTHLY_LIMIT = 50; // temporarily raised from 5 for testing
 const PREMIUM_MONTHLY_LIMIT = 50; // fair-use cap for paid subscribers, prevents runaway AI cost from outlier usage
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

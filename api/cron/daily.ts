@@ -5,7 +5,7 @@ import { callAiWithFallback } from "../_groq_tavily.js";
 import { logAiUsage } from "../_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep } from "../_logger.js";
 
-const FREE_MONTHLY_LIMIT = 5;
+const FREE_MONTHLY_LIMIT = 50; // temporarily raised from 5 for testing
 
 // Verifies this request really came from Vercel Cron. Vercel automatically
 // sends `Authorization: Bearer $CRON_SECRET` on scheduled invocations once

@@ -94,7 +94,7 @@ export const PLAN_CONFIGS: Record<string, PlanConfig> = {
  * Free tier limits (non-premium users)
  */
 export const FREE_TIER_LIMITS = {
-  scans: 5, // monthly free analyses
+  scans: 50, // monthly free analyses (temporarily raised from 5 for testing)
   compares: 0, // free users cannot compare
   chatMessages: 20, // monthly free chat messages
 };
