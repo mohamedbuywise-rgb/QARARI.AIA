@@ -49,22 +49,22 @@ export function generateAnalysis(product: string, offeredPrice: number, currency
   const altCount = isPremium ? 4 : 3;
   const alternatives: Alternative[] = [];
   for (let i = 0; i < altCount; i++) {
-    const altPrice = Math.round(marketFairPriceMid * (0.7 + Math.random() * 0.5));
+    const altName = `${product} ${["Pro", "Max", "Plus", "Ultra"][i]} ${i + 1}`;
     alternatives.push({
-      name: `${product} ${["Pro", "Max", "Plus", "Ultra"][i]} ${i + 1}`,
-      estimatedPrice: altPrice,
+      name: altName,
       reason: {
-        ar: `بديل ممتاز بسعر ${altPrice.toLocaleString()} ${currency}`,
-        en: `Great alternative at ${altPrice.toLocaleString()} ${currency}`,
+        ar: "بديل ممتاز يوفر قيمة أفضل مقابل السعر.",
+        en: "Great alternative that offers better value for money.",
       },
       whySuitable: {
         ar: "يناسب احتياجاتك بشكل جيد ويوفر قيمة أفضل مقابل السعر.",
         en: "Suits your needs well and offers better value for money.",
       },
-      priceSource: "market_search",
-      priceRangeMin: Math.round(altPrice * 0.9),
-      priceRangeMax: Math.round(altPrice * 1.1),
-      confidence: "High",
+      searchLinks: [
+        { retailer: "Jumia", url: `https://www.jumia.com.eg/catalog/?q=${encodeURIComponent(altName)}` },
+        { retailer: "Amazon", url: `https://www.amazon.eg/s?k=${encodeURIComponent(altName)}` },
+        { retailer: "Noon", url: `https://www.noon.com/egypt-en/search/?q=${encodeURIComponent(altName)}` },
+      ],
     });
   }
 
@@ -293,16 +293,24 @@ export function getDemoReport(): AnalysisResult {
     tradeInValue: 37000,
     betterAlternatives: [
       {
-        name: "Samsung Galaxy S24 Ultra",
-        estimatedPrice: 48000,
-        reason: { ar: "مواصفات مماثلة بسعر أقل", en: "Similar specs at lower price" },
-        whySuitable: { ar: "كاميرا وأداء مماثل بسعر أفضل", en: "Similar camera and performance at better price" },
+        name: "Samsung Galaxy S24 Ultra 256GB",
+        reason: { ar: "مواصفات شاشة وكاميرا تنافسية بسعر أقل، ويدعم تحديثات أندرويد لفترة طويلة مقارنة بالآيفون.", en: "Competitive screen and camera specs at a lower price, with long Android update support compared to the iPhone." },
+        whySuitable: { ar: "مناسب لو مش مصمم على نظام آبل تحديدًا.", en: "Suitable if you're not set on the Apple ecosystem specifically." },
+        searchLinks: [
+          { retailer: "Noon", url: "https://www.noon.com/egypt-en/search/?q=" + encodeURIComponent("Samsung Galaxy S24 Ultra 256GB") },
+          { retailer: "Amazon", url: "https://www.amazon.eg/s?k=" + encodeURIComponent("Samsung Galaxy S24 Ultra 256GB") },
+          { retailer: "Jumia", url: "https://www.jumia.com.eg/catalog/?q=" + encodeURIComponent("Samsung Galaxy S24 Ultra 256GB") },
+        ],
       },
       {
         name: "iPhone 15 Pro 128GB",
-        estimatedPrice: 45000,
-        reason: { ar: "نفس الهاتف بسعة أقل وسعر أقل", en: "Same phone with less storage at lower price" },
-        whySuitable: { ar: "إذا لا تحتاج مساحة كبيرة", en: "If you don't need much storage" },
+        reason: { ar: "أقل تكلفة مع معظم المميزات الرئيسية — يقدم أداء قوي وكاميرا ممتازة بسعر أقل من الـ Pro Max.", en: "Lower cost with most of the key features — strong performance and an excellent camera at a lower price than the Pro Max." },
+        whySuitable: { ar: "مناسب لو مش محتاج أكبر سعة تخزين.", en: "Suitable if you don't need the largest storage." },
+        searchLinks: [
+          { retailer: "Noon", url: "https://www.noon.com/egypt-en/search/?q=" + encodeURIComponent("iPhone 15 Pro 128GB") },
+          { retailer: "Amazon", url: "https://www.amazon.eg/s?k=" + encodeURIComponent("iPhone 15 Pro 128GB") },
+          { retailer: "Jumia", url: "https://www.jumia.com.eg/catalog/?q=" + encodeURIComponent("iPhone 15 Pro 128GB") },
+        ],
       },
     ],
     negotiationScript: {

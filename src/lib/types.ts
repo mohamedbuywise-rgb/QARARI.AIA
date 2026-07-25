@@ -36,15 +36,13 @@ export interface BilingualArray {
 
 export interface Alternative {
   name: string;
-  estimatedPrice: number;
   reason: BilingualText;
   whySuitable: BilingualText;
-  // Enriched fields from market search (Section 6/25)
-  priceSource?: "ai_estimate" | "market_search";
-  medianPrice?: number | null;
-  priceRangeMin?: number | null;
-  priceRangeMax?: number | null;
-  confidence?: string;
+  // "Search this yourself" links (Jumia/Amazon/Noon/etc.) — pure store
+  // search URLs for the alternative's name, no price attached. Replaces the
+  // old estimatedPrice/medianPrice fields; alternatives no longer show any
+  // computed or guessed price.
+  searchLinks?: { retailer: string; url: string }[];
 }
 
 export interface AnalysisResult {
@@ -82,12 +80,12 @@ export interface AnalysisResult {
   resaleValueRightNow?: number | null;
   resaleValue2Years?: number | null;
   resaleInsight?: BilingualText;
-  // Per-retailer price comparison (Jumia/Amazon/Noon/optionally B.TECH),
-  // built server-side from the same market-search results used for pricing —
-  // no extra API cost. Empty/absent when fewer than 2 retailers matched.
-  // Prices come from the currency-aware, noise-filtered extractor (see
-  // extractRetailerPrices in api/_groq_tavily.ts).
-  retailerPrices?: { retailer: string; price: number; url: string; currency?: string }[];
+  // "Search the best price yourself" links (Jumia/Amazon/Noon/optionally
+  // B.TECH) — built server-side as pure store search URLs for the product
+  // name (see buildRetailerSearchLinks in api/_groq_tavily.ts). No price is
+  // fetched or shown here; each link just opens that store's own search
+  // results page for the product.
+  retailerPrices?: { retailer: string; url: string }[];
   createdAt: number;
 }
 

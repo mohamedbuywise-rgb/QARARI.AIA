@@ -1,6 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin, getAuthedUser } from "./_supabaseAdmin.js";
-import { callAiWithFallback, enrichAlternativesWithMarketPrices, extractRetailerPrices } from "./_groq_tavily.js";
+import {
+  callAnalysisModel,
+  getFairPriceRangeViaCompound,
+  fetchMainProductRetailerLinks,
+  attachLinksAndPricesToAlternatives,
+  attachSearchLinksToAlternatives,
+  getRegionForCurrency,
+  type FairPriceRange,
+} from "./_groq_tavily.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 import { FREE_TIER_LIMITS, DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
@@ -150,8 +158,9 @@ function buildPrompt(opts: {
   condition: string;
   language: "ar" | "en";
   tier: "free" | "premium";
+  marketPrice: FairPriceRange;
 }) {
-  const { product, offeredPrice, currency, notes, purpose, duration, specs, condition, tier } = opts;
+  const { product, offeredPrice, currency, notes, purpose, duration, specs, condition, tier, language, marketPrice } = opts;
 
   const depthInstruction =
     tier === "premium"
@@ -160,17 +169,17 @@ function buildPrompt(opts: {
 - pros: 3-4 complete specific sentences (not short phrases).
 - cons: 2-3 complete specific sentences (not short phrases).
 - hiddenRisks: 3-4 specific, actionable items (seller verification, serial number checks, spec mismatches vs the stated usage profile).
-- betterAlternatives: up to 6 items.
 - Also include "negotiationScriptVariants": { "polite": {"ar":"...","en":"..."}, "firm": {"ar":"...","en":"..."} } IN ADDITION to negotiationScript.`
       : `FREE TIER DEPTH:
 - reasoningPoints: 2-3 short numbered points.
 - pros: 2-4 short bullet phrases.
 - cons: 2-3 short bullet phrases.
 - hiddenRisks: 1-2 short risk strings.
-- betterAlternatives: 2-4 items.
 - Do NOT include negotiationScriptVariants, only the single negotiationScript field.`;
 
-  return `You are a purchase-decision analyst. You will be given live web search results below — use them to research the CURRENT real market price for this product and produce a structured JSON analysis.
+  const marketPriceSummaryText = marketPrice.summary ? (language === "ar" ? marketPrice.summary.ar : marketPrice.summary.en) : null;
+
+  return `You are a purchase-decision analyst producing a structured JSON analysis for this product.
 
 PRODUCT: ${product}
 OFFERED PRICE: ${offeredPrice} ${currency}
@@ -178,7 +187,11 @@ PRODUCT CONDITION: ${condition}
 USER NOTES: ${notes || "none"}
 USAGE PROFILE — purpose: ${purpose}, expected duration: ${duration}, other specs/preferences: ${specs || "none"}
 
-PRICE RANGE RULE: If a specific variant (storage/RAM/size/capacity/color) is given above, marketFairPriceMin/Max MUST reflect prices for THAT variant only — do not average across other variants of the same product. If no variant is given, marketPriceSummary must explicitly say the range spans multiple variants/configurations and name what info (e.g. storage) would narrow it.
+MARKET PRICE DATA (already researched live for you by a separate pricing system — DO NOT recalculate or invent different numbers, just use these exact figures everywhere you need a price):
+- marketFairPriceMin: ${marketPrice.min ?? "null"}
+- marketFairPriceMax: ${marketPrice.max ?? "null"}
+- marketFairPriceMid: ${marketPrice.mid ?? "null"}
+${marketPriceSummaryText ? `- Research note: ${marketPriceSummaryText}` : "- No reliable pricing signal was found — treat both bounds as null."}
 
 ${depthInstruction}
 
@@ -199,7 +212,7 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
   "cons": { "ar": string[], "en": string[] },
   "hiddenRisks": { "ar": string[], "en": string[] },
   "finalTip": { "ar": string, "en": string },
-  "betterAlternatives": [ { "name": string, "estimatedPrice": number, "reason": {"ar":string,"en":string}, "whySuitable": {"ar":string,"en":string} } ],
+  "betterAlternatives": [ { "name": string, "reason": {"ar":string,"en":string}, "whySuitable": {"ar":string,"en":string} } ],
   "negotiationScript": { "ar": string, "en": string }${tier === "premium" ? ',\n  "negotiationScriptVariants": { "polite": {"ar":string,"en":string}, "firm": {"ar":string,"en":string} }' : ""},
   "resaleValueRightNow": number | null,
   "resaleValue2Years": number | null,
@@ -207,18 +220,14 @@ Return a JSON object with EXACTLY this shape (all text fields must have both "ar
 }
 
 Rules:
+- marketFairPriceMin/marketFairPriceMax/marketFairPriceMid: COPY the exact numbers given above in "MARKET PRICE DATA" verbatim — do NOT recalculate, adjust, or invent a different figure. If they are given as null, return null.
 - marketPriceSummary: write ONE analytical paragraph (2-4 sentences, natural fluent language, not a bullet list) that reads like a Google AI-generated search overview summarizing the current market price for this exact product — e.g. "بناءً على نتائج البحث، يتراوح سعر [المنتج] في السوق حالياً بين [الحد الأدنى] و[الحد الأقصى]، مع فرق واضح بين الجهاز الجديد والمستعمل/كسر الزيرو إن وُجد". Requirements for this paragraph:
-  - State the current price range explicitly using the SAME marketFairPriceMin/Max numbers you return elsewhere — never a different or rounder-sounding figure.
-  - If the search results distinguish new vs. used/refurbished/"كسر الزيرو" listings, mention both sub-ranges briefly; otherwise just describe the single range you found.
-  - Never include a bare 4-digit number that is actually a calendar year (e.g. a copyright year, "as of 2026", a review/article publish year) as if it were a price — only real listing prices belong in this paragraph.
-  - Do not invent figures: if marketFairPriceMin/Max are null, say plainly that no reliable current price was found in the search results instead of describing a range.
-- PRICE SOURCE OF TRUTH: if the LIVE WEB SEARCH CONTEXT below contains a section titled "BACKEND-EXTRACTED MARKET PRICE DATA", that block is authoritative — copy its marketFairPriceMin/Mid/Max values into your JSON EXACTLY as given. Do not recalculate, adjust, round differently, or re-derive them from the raw search results in that case.
-- Only if that "BACKEND-EXTRACTED MARKET PRICE DATA" section is ABSENT are you allowed to derive marketFairPriceMin/Max yourself from the raw search results — and even then, you must IGNORE any figure that is a trade-in value, financing/installment/monthly payment, coupon or discount amount, shipping/tax fee, AppleCare/insurance/warranty price, accessory/case/charger/cable price, gift-card value, auction/bid amount, deposit/reservation/membership/subscription fee, or repair/replacement cost — only actual full retail selling-price listings for the product itself count. When in doubt, prefer the range implied by well-known official/major retailers over unknown sources.
-- marketFairPriceMid is the midpoint of min/max.
-- If — and only if — the live search results (including the backend-extracted block, when present) give you no reliable pricing signal for this product, return marketFairPriceMin, marketFairPriceMax, and marketFairPriceMid as null instead of inventing numbers. Do not do this if any usable pricing data exists.
-- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax. If the price fields are null, use "fair" unless the search context clearly points elsewhere.
+  - State the current price range explicitly using the SAME marketFairPriceMin/Max numbers given above — never a different or rounder-sounding figure.
+  - Use the research note given above (if any) as your source of what was found.
+  - Do not invent figures: if marketFairPriceMin/Max are null, say plainly that no reliable current price was found instead of describing a range.
+- verdict: "good" if offeredPrice < marketFairPriceMin, "fair" if within range, "bad" if above marketFairPriceMax (using the given numbers above). If the price fields are null, use "fair" unless other context clearly points elsewhere.
 - All prices in ${currency}.
-- betterAlternatives: Suggest alternatives that are actually better value or similar in price, not 2x more expensive. All estimatedPrice values for betterAlternatives MUST be realistic current market prices in ${currency} and MUST match the specified PRODUCT CONDITION (${condition}).
+- betterAlternatives: return EXACTLY 4 items — not 3, not 5, always exactly 4. Suggest alternatives that are actually better value or similar in price, not 2x more expensive for no reason. Do NOT include a price for alternatives yourself — the app runs its own live research for each alternative afterward and attaches a real fair price range plus a direct listing link, so just focus on why each one is a good pick and what condition (${condition}) it should match.
 - resaleValueRightNow: estimate what this product would sell for on the second-hand market RIGHT NOW (in ${currency}), based on brand reputation, current demand, and the offeredPrice of ${offeredPrice} ${currency}. Return null if no reliable data.
 - resaleValue2Years: estimate what this product will be worth on the second-hand market in 2 years from now. Return null if no reliable data.
 - resaleInsight: a bilingual text with a brief insight about the resale value of this product. E.g. in Arabic: "آبل بتحتفظ بقيمة عالية جداً في السوق، بعد سنتين ممكن تبيعه بـ 55% من سعره" and in English: "Apple retains value well in the market, after 2 years you can sell for ~55% of current price."
@@ -367,13 +376,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       modelUsed = cachedRow.model_used;
       console.log("[/api/analyze] Using cached analysis. modelUsed:", modelUsed);
     } else {
-      // ---- Call Groq + Tavily (Section 6 + Section 14A tier branching + Section 2 fallback) ----
-      const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, condition, language, tier });
+      const cond: "new" | "likeNew" | "used" = condition === "used" ? "used" : condition === "likeNew" ? "likeNew" : "new";
+
+      // ---- STEP 1: Groq Compound (background, invisible to the client) ----
+      // Sole source of truth for the main product's fair price range. Runs
+      // its own live web search internally — Serper plays no part in this.
+      logStep("Calling Groq Compound for fair price range (background)...");
+      const marketPrice: FairPriceRange = await getFairPriceRangeViaCompound(product, currency, cond, specs);
+      console.log("[/api/analyze] Compound price range:", marketPrice.min, "-", marketPrice.max, "| mid:", marketPrice.mid);
+
+      // ---- STEP 2: narrative analysis (verdict, reasoning, pros/cons,
+      // hidden risks, alternatives, negotiation, resale) — given the
+      // Compound price range as an already-researched fact, never asked to
+      // recompute it itself. No Serper search happens in this call at all.
+      const prompt = buildPrompt({ product, offeredPrice: Number(offeredPrice), currency, notes, purpose, duration, specs, condition, language, tier, marketPrice });
 
       let aiResult;
       try {
-        logStep("Calling AI pipeline (Groq + Tavily)...");
-        aiResult = await callAiWithFallback(prompt, imageBase64);
+        logStep("Calling AI pipeline (narrative analysis)...");
+        aiResult = await callAnalysisModel(prompt);
         console.log("[/api/analyze] AI pipeline succeeded. modelUsed:", aiResult.modelUsed, "| usage:", aiResult.usage);
       } catch (e: any) {
         // Section 10: both models failed — clear translated error, not a silent failure
@@ -386,39 +407,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed = aiResult.data;
       modelUsed = aiResult.modelUsed;
 
-      // ---- Retailer price comparison (Jumia/Amazon/Noon/optionally B.TECH) ----
-      // Built from the marketplace search results the AI pipeline already
-      // fetched (Search 2) — no extra Serper call. Prices are extracted with
-      // the same currency-aware, noise-filtered logic used for the main
-      // market price (see extractRetailerPrices in _groq_tavily.ts), not the
-      // naive regex that used to make these prices unreliable. Stored on
-      // `parsed` so it rides along with the cached analysis on future cache
-      // hits too.
+      // Compound is the sole source of truth for the main product's price —
+      // enforce its numbers on the final result regardless of what the
+      // narrative model echoed back.
+      parsed.marketFairPriceMin = marketPrice.min;
+      parsed.marketFairPriceMax = marketPrice.max;
+      parsed.marketFairPriceMid = marketPrice.mid;
+
+      // ---- STEP 3: Serper's ONLY job — direct listing links (Jumia/Amazon/
+      // Noon, optionally B.TECH) for the main product. Never used for
+      // pricing. Stored on `parsed` so it rides along with the cached
+      // analysis on future cache hits too.
       try {
-        parsed.retailerPrices = extractRetailerPrices(aiResult.retailerSearchResults || [], aiResult.currency || currency);
+        parsed.retailerPrices = await fetchMainProductRetailerLinks(product, currency, cond);
       } catch (e) {
-        console.error("[/api/analyze] Retailer price extraction failed (non-fatal):", e);
+        console.error("[/api/analyze] Building retailer search links failed (non-fatal):", e);
         parsed.retailerPrices = [];
       }
 
-      // ---- Enrich betterAlternatives with real, condition-matched prices ----
-      // The model's own estimatedPrice is just a guess (and often assumes
-      // "new" regardless of what the user picked). Replace it with a real
-      // median pulled from the same condition-aware search used for the
-      // main product, so alternatives are priced in the same condition
-      // (new / كسر زيرو / مستعمل) the user is actually shopping for.
-      let altSearchQueryCount = 0;
-      if (Array.isArray(parsed.betterAlternatives) && parsed.betterAlternatives.length > 0) {
+      // ---- STEP 4: exactly 4 alternatives, hard cap enforced here regardless
+      // of what the model returned. Each gets Serper direct links + a
+      // Compound-derived fair price range.
+      if (Array.isArray(parsed.betterAlternatives)) {
+        parsed.betterAlternatives = parsed.betterAlternatives.slice(0, 4);
+      } else {
+        parsed.betterAlternatives = [];
+      }
+
+      if (parsed.betterAlternatives.length > 0) {
         try {
-          const { enriched, searchQueryCount } = await enrichAlternativesWithMarketPrices(
+          const region = getRegionForCurrency(currency);
+          parsed.betterAlternatives = await attachLinksAndPricesToAlternatives(
             parsed.betterAlternatives,
             currency,
-            condition === "used" ? "used" : condition === "likeNew" ? "likeNew" : "new"
+            region,
+            cond
           );
-          parsed.betterAlternatives = enriched;
-          altSearchQueryCount = searchQueryCount;
         } catch (e) {
-          console.error("[/api/analyze] Alternative price enrichment failed (non-fatal):", e);
+          console.error("[/api/analyze] Researching alternative prices failed (non-fatal):", e);
+          parsed.betterAlternatives = attachSearchLinksToAlternatives(parsed.betterAlternatives, currency);
         }
       }
 
@@ -429,7 +456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model: aiResult.modelUsed,
         tier: user ? tier : "guest",
         userId: user?.id || null,
-        usage: { ...aiResult.usage, searchQueryCount: aiResult.usage.searchQueryCount + altSearchQueryCount },
+        usage: aiResult.usage,
       });
 
       // Store for future requests — best-effort, never blocks the response

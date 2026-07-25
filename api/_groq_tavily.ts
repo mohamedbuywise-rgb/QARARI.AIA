@@ -1,8 +1,13 @@
 import { logStep, logEnvPresence, loggedFetch, loggedJsonParse } from "./_logger.js";
-import { computeMarketPriceRange, formatMarketPriceContext, isSupportedCurrency, extractListingPrice, type SupportedCurrency } from "./_priceExtraction.js";
+import { computeMarketPriceRange, isSupportedCurrency, type SupportedCurrency } from "./_priceExtraction.js";
 
 const PRIMARY_MODEL = "openai/gpt-oss-120b";
 const FALLBACK_MODEL = "openai/gpt-oss-20b";
+// Groq Compound — used ONLY in the background (never a step the client sees)
+// to fetch the fair market price range. Unlike PRIMARY/FALLBACK_MODEL, it
+// runs its own live web search internally, so it is never fed Serper
+// snippets — it is the sole source of truth for pricing.
+const COMPOUND_MODEL = "groq/compound";
 
 export interface AiUsage {
   promptTokens: number;
@@ -156,6 +161,10 @@ const CURRENCY_REGION_HINTS: Record<string, { gl: string; hl: string }> = {
   EUR: { gl: "de", hl: "en" },
 };
 
+export function getRegionForCurrency(currency: string): { gl: string; hl: string } {
+  return CURRENCY_REGION_HINTS[currency] || { gl: "eg", hl: "ar" };
+}
+
 interface SearchState {
   allResults: SerperResult[];
   searchCount: number;
@@ -192,7 +201,9 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
 
     let priceAnalysis = await computeMarketPriceRange(state.allResults, currency as any, `PRODUCT: ${product}`, condition);
     if (priceAnalysis?.confidence === "High" && priceAnalysis.validCount >= 5) {
-      return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [] };
+      // Used/likeNew marketplace results ARE the retailer results for this
+      // condition — reuse them so direct listing links can be built too.
+      return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: results1 };
     }
 
     // Broaden with a plain query (still condition-qualified) if not enough signal yet
@@ -201,7 +212,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
     state.allResults.push(...results2);
     state.searchCount++;
 
-    return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [] };
+    return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults: [...results1, ...results2] };
   }
 
   // SEARCH 1: Official Store
@@ -268,7 +279,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
   return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults };
 }
 
-async function callGroqModel(model: string, system: string, user: string) {
+async function callGroqModel(model: string, system: string, user: string, jsonMode: boolean = true) {
   const apiKey = process.env.GROQ_API_KEY;
   const res = await loggedFetch("groq.chat", "https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -277,11 +288,140 @@ async function callGroqModel(model: string, system: string, user: string) {
       model,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       temperature: 0.1,
-      response_format: { type: "json_object" },
+      // Compound systems aren't guaranteed to support strict JSON-object
+      // mode the way plain chat models do, so callers targeting
+      // COMPOUND_MODEL pass jsonMode=false and rely on prompt instructions
+      // + defensive parsing instead.
+      ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
     }),
   });
   if (!res.ok) throw new Error(`Groq error ${res.status}`);
   return res.json();
+}
+
+/**
+ * The narrative/analysis call for api/analyze.ts — verdict, reasoning,
+ * pros/cons, hidden risks, alternatives, negotiation script, resale value.
+ * Deliberately does NOT run any Serper search and is NOT responsible for
+ * deriving the fair price range itself: the caller must supply the
+ * Groq-Compound-derived price range as already-researched facts inside the
+ * prompt. Serper's role in this pipeline is limited to direct retailer
+ * links (see fetchMainProductRetailerLinks / attachLinksAndPricesToAlternatives).
+ */
+export async function callAnalysisModel(prompt: string): Promise<{ data: any; modelUsed: string; usage: AiUsage }> {
+  const systemPrompt = "You are a purchase-decision analyst. Respond with ONLY a single valid JSON object.";
+  try {
+    const json = await callGroqModel(PRIMARY_MODEL, systemPrompt, prompt);
+    return {
+      data: JSON.parse(json.choices[0].message.content),
+      modelUsed: PRIMARY_MODEL,
+      usage: {
+        promptTokens: json.usage.prompt_tokens,
+        outputTokens: json.usage.completion_tokens,
+        totalTokens: json.usage.total_tokens,
+        searchQueryCount: 0,
+      },
+    };
+  } catch (e) {
+    const json = await callGroqModel(FALLBACK_MODEL, systemPrompt, prompt);
+    return {
+      data: JSON.parse(json.choices[0].message.content),
+      modelUsed: FALLBACK_MODEL,
+      usage: {
+        promptTokens: json.usage.prompt_tokens,
+        outputTokens: json.usage.completion_tokens,
+        totalTokens: json.usage.total_tokens,
+        searchQueryCount: 0,
+      },
+    };
+  }
+}
+
+export interface FairPriceRange {
+  min: number | null;
+  max: number | null;
+  mid: number | null;
+  summary: { ar: string; en: string } | null;
+}
+
+function stripJsonFences(text: string): string {
+  return text.replace(/```json|```/g, "").trim();
+}
+
+// Pull the first {...} block out of a response that may contain stray prose
+// around the JSON (Compound systems, unlike json_object mode, don't
+// guarantee the response is ONLY the JSON object).
+function extractJsonObject(text: string): string {
+  const cleaned = stripJsonFences(text);
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return cleaned;
+  return cleaned.slice(start, end + 1);
+}
+
+/**
+ * Groq Compound — runs entirely in the background (the client never sees
+ * this as a separate step). This is the SOLE source of the fair market
+ * price range for the main product: it performs its own live web search
+ * internally and is never handed Serper snippets or any other pre-fetched
+ * pricing signal.
+ */
+export async function getFairPriceRangeViaCompound(
+  product: string,
+  currency: string,
+  condition: "new" | "likeNew" | "used",
+  specs: string
+): Promise<FairPriceRange> {
+  const conditionLabel = condition === "used" ? "used/second-hand" : condition === "likeNew" ? "like-new/open-box" : "new";
+  const system = "You are a market-pricing research analyst with live web search access. Respond with ONLY a single valid JSON object — no prose, no markdown code fences.";
+  const user = `Research the CURRENT fair market price range for this exact product in ${currency}, condition: ${conditionLabel}.
+
+PRODUCT: ${product}${specs ? `\nVARIANT/SPECS: ${specs}` : ""}
+
+Search the web yourself for real, current retail listings. Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
+
+Return ONLY this JSON shape, nothing else:
+{ "min": number | null, "max": number | null, "summary": { "ar": string, "en": string } }
+
+- min/max: the current fair price range in ${currency}. Return null for both if you find no reliable pricing signal from your search — never invent a number.
+- summary: ONE short natural sentence (in both Arabic and English) stating the range you found. If min/max are null, say plainly that no reliable current price was found instead of describing a range.`;
+
+  try {
+    const json = await callGroqModel(COMPOUND_MODEL, system, user, false);
+    const raw = json?.choices?.[0]?.message?.content || "";
+    const parsed = loggedJsonParse(`compound.price[${product}]`, extractJsonObject(raw));
+    const min = typeof parsed?.min === "number" ? parsed.min : null;
+    const max = typeof parsed?.max === "number" ? parsed.max : null;
+    const mid = min !== null && max !== null ? Math.round((min + max) / 2) : null;
+    const summary =
+      parsed?.summary && typeof parsed.summary === "object"
+        ? { ar: typeof parsed.summary.ar === "string" ? parsed.summary.ar : "", en: typeof parsed.summary.en === "string" ? parsed.summary.en : "" }
+        : null;
+    return { min, max, mid, summary };
+  } catch (e) {
+    console.error(`[getFairPriceRangeViaCompound] Compound pricing failed for "${product}" (non-fatal):`, e);
+    return { min: null, max: null, mid: null, summary: null };
+  }
+}
+
+/**
+ * Same Compound-driven pricing as getFairPriceRangeViaCompound, but for the
+ * (exactly 4) alternatives — one Compound call per alternative, run in
+ * parallel, each doing its own live search. Never batched into a single
+ * call, since each alternative needs its own independent live search.
+ */
+export async function getFairPriceRangesForAlternativesViaCompound(
+  altNames: string[],
+  currency: string,
+  condition: "new" | "likeNew" | "used"
+): Promise<Record<string, { min: number | null; max: number | null }>> {
+  const entries = await Promise.all(
+    altNames.map(async (name) => {
+      const r = await getFairPriceRangeViaCompound(name, currency, condition, "");
+      return [name, { min: r.min, max: r.max }] as const;
+    })
+  );
+  return Object.fromEntries(entries);
 }
 
 export async function callAiWithFallback(
@@ -310,13 +450,16 @@ export async function callAiWithFallback(
     searchQueryCount = searchCount;
     retailerSearchResults = retailerResults;
 
-    const priceRange = await computeMarketPriceRange(allResults, targetCurrency as any, prompt, condition);
-    if (priceRange) {
-      searchContext = formatMarketPriceContext(priceRange);
-    }
-    
-    // Add top snippets for reasoning
-    searchContext += "\n\nSEARCH SNIPPETS:\n" + allResults.slice(0, 10).map(r => `- ${r.title}: ${r.content}`).join("\n");
+    // Serper's ONLY job is to fetch candidate listings/snippets. We
+    // deliberately do NOT run a backend price calculation (computeMarketPriceRange)
+    // and hand its output to the model as an "authoritative" figure anymore —
+    // the AI itself is the one that reads the raw snippets and derives the
+    // fair price range (see the PRICE SOURCE OF TRUTH rule in analyze.ts).
+    // computeMarketPriceRange is still used internally by smartAdaptiveSearch
+    // purely to decide when it has searched enough (an efficiency signal),
+    // not to hand a computed number to the model.
+    searchContext = "SEARCH SNIPPETS (raw listings found for this product — use these to work out the current fair price range yourself):\n" +
+      allResults.slice(0, 15).map(r => `- ${r.title} (${r.url}): ${r.content}`).join("\n");
   }
 
   const systemPrompt = "You are a purchase-decision analyst. Respond with ONLY a single valid JSON object.";
@@ -357,141 +500,270 @@ export async function callAiWithFallback(
 
 export interface AlternativeInput {
   name: string;
-  estimatedPrice: number;
   reason: { ar: string; en: string };
   whySuitable: { ar: string; en: string };
 }
 
-export interface EnrichedAlternative extends AlternativeInput {
-  medianPrice: number | null;
-  priceRangeMin: number | null;
-  priceRangeMax: number | null;
-  confidence: "High" | "Medium" | "Low" | "Unknown";
-  priceSource: "market_search" | "ai_estimate";
+export interface AlternativeWithLinks extends AlternativeInput {
+  searchLinks: RetailerLink[];
+  // Fair price range for the alternative, derived by Groq Compound via its
+  // own live web search (see getFairPriceRangesForAlternativesViaCompound).
+  // Null when Compound finds no reliable pricing signal.
+  fairPriceMin: number | null;
+  fairPriceMax: number | null;
 }
 
-// Runs one lightweight, condition-matched Serper search per alternative and
-// replaces the model's guessed estimatedPrice with a real median wherever
-// the search finds enough data. This is what makes "بدائل أفضل" priced in
-// the SAME condition the user asked about (new vs كسر زيرو vs مستعمل)
-// instead of the model's own — often new-condition — assumption.
-// Capped at MAX_ENRICHED to bound the extra Serper cost per analysis.
-const MAX_ENRICHED_ALTERNATIVES = 4;
+// One live marketplace-scoped Serper search for a single alternative's name
+// — same domain set (or used-marketplace set) as the main product search,
+// so results are directly comparable and can double as both the "direct
+// link" source and the pricing source.
+async function searchAlternativeListings(
+  altName: string,
+  currency: string,
+  region: { gl: string; hl: string },
+  condition: "new" | "likeNew" | "used"
+): Promise<SerperResult[]> {
+  const retailers = COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD;
+  const usedSites = USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD;
+  const domains = condition === "new" ? retailers.marketplace : usedSites;
+  const qualifier = conditionQualifier(condition);
+  const siteQuery = domains.map((m) => `site:${m}`).join(" OR ");
+  const query = `${altName} price ${currency} ${qualifier} (${siteQuery})`;
+  return searchSerper(query, region);
+}
 
-export async function enrichAlternativesWithMarketPrices(
-  alternatives: AlternativeInput[],
+/**
+ * Serper's ONLY job for the main product: fetch raw listing snippets from
+ * the target retailer/marketplace domains (Amazon/Jumia/Noon, or the
+ * used-marketplace set for likeNew/used) so a direct link to a real first
+ * listing can be picked. Never used for pricing — see
+ * getFairPriceRangeViaCompound for that.
+ */
+async function fetchRetailerListings(
+  product: string,
+  currency: string,
+  region: { gl: string; hl: string },
+  condition: "new" | "likeNew" | "used"
+): Promise<SerperResult[]> {
+  const retailers = COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD;
+  const usedSites = USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD;
+  const qualifier = conditionQualifier(condition);
+  const domains = condition === "new" ? retailers.marketplace : usedSites;
+  const siteQuery = domains.map((m) => `site:${m}`).join(" OR ");
+  const query = `${product} price ${currency} ${qualifier} (${siteQuery})`;
+  return searchSerper(query, region);
+}
+
+/**
+ * One-call helper for the main product: runs the Serper link search and
+ * picks direct listing URLs for the target retailers, falling back to that
+ * store's own search page only when Serper genuinely found nothing.
+ */
+export async function fetchMainProductRetailerLinks(
+  product: string,
   currency: string,
   condition: "new" | "likeNew" | "used"
-): Promise<{ enriched: EnrichedAlternative[]; searchQueryCount: number }> {
-  const region = CURRENCY_REGION_HINTS[currency] || { gl: "eg", hl: "ar" };
-  const qualifier = conditionQualifier(condition);
-  let searchQueryCount = 0;
-
-  const results = await Promise.all(
-    alternatives.map(async (alt, i): Promise<EnrichedAlternative> => {
-      if (i >= MAX_ENRICHED_ALTERNATIVES) {
-        return { ...alt, medianPrice: null, priceRangeMin: null, priceRangeMax: null, confidence: "Unknown", priceSource: "ai_estimate" };
-      }
-
-      const sites =
-        condition === "new"
-          ? (COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD).marketplace
-          : (USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD);
-      const siteFilter = sites.map(s => `site:${s}`).join(" OR ");
-      const query = `${alt.name} price ${currency} ${qualifier} (${siteFilter})`;
-
-      const serperResults = await searchSerper(query, region);
-      searchQueryCount++;
-
-      const priceRange = await computeMarketPriceRange(serperResults, currency as any, `PRODUCT: ${alt.name}`, condition);
-
-      if (!priceRange) {
-        return { ...alt, medianPrice: null, priceRangeMin: null, priceRangeMax: null, confidence: "Unknown", priceSource: "ai_estimate" };
-      }
-
-      return {
-        ...alt,
-        estimatedPrice: priceRange.mid, // override the model's guess with a real, condition-matched median
-        medianPrice: priceRange.mid,
-        priceRangeMin: priceRange.min,
-        priceRangeMax: priceRange.max,
-        confidence: priceRange.confidence,
-        priceSource: "market_search",
-      };
-    })
-  );
-
-  return { enriched: results, searchQueryCount };
-}
-
-export interface RetailerPrice {
-  retailer: string;
-  price: number;
-  url: string;
-  currency: string;
-}
-
-// Retailers eligible for the ReportScreen price comparison, matched against
-// each result's hostname. B.TECH is included only behind SHOW_BTECH_COMPARISON.
-function getComparisonRetailers(): { domain: string; name: string }[] {
-  const retailers = [
-    { domain: "jumia.com.eg", name: "Jumia" },
-    { domain: "amazon.eg", name: "Amazon" },
-    { domain: "noon.com", name: "Noon" },
-  ];
-  if (SHOW_BTECH_COMPARISON) {
-    retailers.push({ domain: "btech.com", name: "B.TECH" });
-  }
-  return retailers;
-}
-
-function hostnameMatches(url: string, domain: string): boolean {
+): Promise<RetailerLink[]> {
   try {
-    const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-    return hostname === domain || hostname.endsWith(`.${domain}`);
-  } catch {
-    return false;
+    const region = getRegionForCurrency(currency);
+    const results = await fetchRetailerListings(product, currency, region, condition);
+    return pickDirectRetailerLinks(results, product, currency, condition);
+  } catch (e) {
+    console.error("[fetchMainProductRetailerLinks] Serper link fetch failed (non-fatal):", e);
+    return buildRetailerSearchLinks(product, currency, condition);
   }
 }
 
 /**
- * Builds a per-retailer price comparison (Jumia/Amazon/Noon, optionally
- * B.TECH) straight from the Search 2 ("Largest Marketplace") results
- * already fetched by smartAdaptiveSearch — no additional Serper query.
- *
- * Price extraction reuses the same currency-aware, noise-filtered
- * extractPrices() logic as the main market-price calculation (see
- * _priceExtraction.ts) instead of a naive "smallest number in the text"
- * regex — that naive approach is what made prices unreliable before (it
- * could latch onto a rating count, a spec number, or an unrelated figure
- * in the snippet with no currency check at all). Listings whose price
- * isn't in the report's own currency are skipped rather than silently
- * converted, so what's shown always matches the currency on screen.
+ * For each of the (exactly 4) alternatives: (1) Serper fetches direct
+ * listing links only — same marketplace domains as the main product, never
+ * used for pricing — and (2) Groq Compound independently researches and
+ * returns the fair price range via its own live web search. The two are
+ * merged here into the final alternative card the report displays.
  */
-export function extractRetailerPrices(results: SerperResult[], currency: string): RetailerPrice[] {
-  const retailers = getComparisonRetailers();
-  const prices: RetailerPrice[] = [];
-  if (!isSupportedCurrency(currency)) return prices;
-  const targetCurrency = currency as SupportedCurrency;
+export async function attachLinksAndPricesToAlternatives(
+  alternatives: AlternativeInput[],
+  currency: string,
+  region: { gl: string; hl: string },
+  condition: "new" | "likeNew" | "used"
+): Promise<AlternativeWithLinks[]> {
+  if (alternatives.length === 0) return [];
 
-  for (const { domain, name } of retailers) {
-    let best: { price: number; url: string } | null = null;
+  // Serper: direct listing links only.
+  const perAltResults = await Promise.all(
+    alternatives.map((alt) => searchAlternativeListings(alt.name, currency, region, condition))
+  );
+  const withLinks = alternatives.map((alt, i) => ({
+    ...alt,
+    searchLinks: pickDirectRetailerLinks(perAltResults[i], alt.name, currency, condition),
+  }));
 
-    for (const r of results) {
-      if (!r.url || !hostnameMatches(r.url, domain)) continue;
-
-      const price = extractListingPrice(r.content, r.title, r.url, targetCurrency);
-      if (price === null) continue;
-
-      if (!best || price < best.price) {
-        best = { price, url: r.url };
-      }
-    }
-
-    if (best) {
-      prices.push({ retailer: name, price: best.price, url: best.url, currency });
-    }
+  // Groq Compound (background): fair price range for each alternative.
+  try {
+    const priceMap = await getFairPriceRangesForAlternativesViaCompound(
+      alternatives.map((a) => a.name),
+      currency,
+      condition
+    );
+    return withLinks.map((alt) => ({
+      ...alt,
+      fairPriceMin: priceMap[alt.name]?.min ?? null,
+      fairPriceMax: priceMap[alt.name]?.max ?? null,
+    }));
+  } catch (e) {
+    console.error("[attachLinksAndPricesToAlternatives] Compound pricing failed (non-fatal):", e);
+    return withLinks.map((alt) => ({ ...alt, fairPriceMin: null, fairPriceMax: null }));
   }
+}
 
-  return prices;
+// Fallback-only path (no live search) — kept for when researchAndPriceAlternatives
+// itself throws before any Serper call completes, so the UI still gets store
+// search links even without a fair-price range.
+export function attachSearchLinksToAlternatives(
+  alternatives: AlternativeInput[],
+  currency: string
+): AlternativeWithLinks[] {
+  return alternatives.map((alt) => ({
+    ...alt,
+    searchLinks: buildRetailerSearchLinks(alt.name, currency),
+    fairPriceMin: null,
+    fairPriceMax: null,
+  }));
+}
+
+export interface RetailerLink {
+  retailer: string;
+  url: string;
+}
+
+// Friendly display names for each retailer domain.
+const RETAILER_DISPLAY_NAMES: Record<string, string> = {
+  "jumia.com.eg": "Jumia",
+  "amazon.eg": "Amazon",
+  "amazon.sa": "Amazon",
+  "amazon.ae": "Amazon",
+  "amazon.com": "Amazon",
+  "amazon.de": "Amazon",
+  "amazon.fr": "Amazon",
+  "amazon.it": "Amazon",
+  "noon.com": "Noon",
+  "btech.com": "B.TECH",
+  "jarir.com": "Jarir",
+  "extra.com": "Extra",
+  "carrefour.ae": "Carrefour",
+  "xcite.com": "Xcite",
+  "bhphotovideo.com": "B&H",
+  "newegg.com": "Newegg",
+  "bestbuy.com": "Best Buy",
+  "dubizzle.com.eg": "Dubizzle",
+  "dubizzle.com": "Dubizzle",
+  "eg.opensooq.com": "OpenSooq",
+  "opensooq.com": "OpenSooq",
+  "haraj.com.sa": "Haraj",
+  "ebay.com": "eBay",
+  "ebay.de": "eBay",
+  "swappa.com": "Swappa",
+};
+
+// Each store's own in-site search URL pattern, so the link takes the person
+// straight to a search for the product NAME inside that store — never a
+// specific listing or price, since prices change constantly and we can't
+// guarantee a specific URL still matches. Any domain without a known
+// pattern here falls back to a Google site-search (still just a search,
+// never a price lookup).
+const RETAILER_SEARCH_URL_BUILDERS: Record<string, (q: string) => string> = {
+  "jumia.com.eg": (q) => `https://www.jumia.com.eg/catalog/?q=${encodeURIComponent(q)}`,
+  "amazon.eg": (q) => `https://www.amazon.eg/s?k=${encodeURIComponent(q)}`,
+  "amazon.sa": (q) => `https://www.amazon.sa/s?k=${encodeURIComponent(q)}`,
+  "amazon.ae": (q) => `https://www.amazon.ae/s?k=${encodeURIComponent(q)}`,
+  "amazon.com": (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
+  "amazon.de": (q) => `https://www.amazon.de/s?k=${encodeURIComponent(q)}`,
+  "amazon.fr": (q) => `https://www.amazon.fr/s?k=${encodeURIComponent(q)}`,
+  "amazon.it": (q) => `https://www.amazon.it/s?k=${encodeURIComponent(q)}`,
+  "noon.com": (q) => `https://www.noon.com/egypt-en/search/?q=${encodeURIComponent(q)}`,
+  "btech.com": (q) => `https://btech.com/en/catalogsearch/result/?q=${encodeURIComponent(q)}`,
+  "jarir.com": (q) => `https://www.jarir.com/sa-en/catalogsearch/result/?q=${encodeURIComponent(q)}`,
+  "extra.com": (q) => `https://www.extra.com/en-sa/search/?q=${encodeURIComponent(q)}`,
+  "carrefour.ae": (q) => `https://www.carrefouruae.com/mafuae/en/search?keyword=${encodeURIComponent(q)}`,
+  "xcite.com": (q) => `https://www.xcite.com/catalogsearch/result/?q=${encodeURIComponent(q)}`,
+  "bestbuy.com": (q) => `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(q)}`,
+  "bhphotovideo.com": (q) => `https://www.bhphotovideo.com/c/search?Ntt=${encodeURIComponent(q)}`,
+  "newegg.com": (q) => `https://www.newegg.com/p/pl?d=${encodeURIComponent(q)}`,
+  "dubizzle.com.eg": (q) => `https://www.dubizzle.com.eg/en/search/?q=${encodeURIComponent(q)}`,
+  "dubizzle.com": (q) => `https://dubai.dubizzle.com/search/?q=${encodeURIComponent(q)}`,
+  "eg.opensooq.com": (q) => `https://eg.opensooq.com/en/search?query=${encodeURIComponent(q)}`,
+  "opensooq.com": (q) => `https://opensooq.com/en/search?query=${encodeURIComponent(q)}`,
+  "ebay.com": (q) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,
+  "ebay.de": (q) => `https://www.ebay.de/sch/i.html?_nkw=${encodeURIComponent(q)}`,
+  "swappa.com": (q) => `https://swappa.com/search?q=${encodeURIComponent(q)}`,
+};
+
+function buildStoreSearchUrl(domain: string, query: string): string {
+  const builder = RETAILER_SEARCH_URL_BUILDERS[domain];
+  if (builder) return builder(query);
+  return `https://www.google.com/search?q=${encodeURIComponent(`site:${domain} ${query}`)}`;
+}
+
+/**
+ * Builds "search it yourself" links (Jumia/Amazon/Noon, optionally B.TECH,
+ * or the used-marketplace set for likeNew/used condition) for a given
+ * product name. This is pure URL construction — no Serper call, no price
+ * extraction of any kind. Serper's role is limited to fetching search
+ * result snippets that the AI model reads to work out the fair price range
+ * itself; it plays no part in building these store links or in deciding
+ * what price (if any) shows up next to a retailer.
+ */
+export function buildRetailerSearchLinks(
+  product: string,
+  currency: string,
+  condition: "new" | "likeNew" | "used" = "new"
+): RetailerLink[] {
+  const domains =
+    condition === "new"
+      ? (COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD).marketplace
+      : (USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD);
+
+  const visibleDomains = SHOW_BTECH_COMPARISON ? domains : domains.filter((d) => d !== "btech.com");
+
+  return visibleDomains.map((domain) => ({
+    retailer: RETAILER_DISPLAY_NAMES[domain] || domain,
+    url: buildStoreSearchUrl(domain, product),
+  }));
+}
+
+function urlDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Picks a direct link to the actual first listing Serper found for each
+ * target retailer domain, using Serper results already fetched for a
+ * marketplace-scoped query (no extra API call). Falls back to that store's
+ * own search-results page only for a domain Serper genuinely returned
+ * nothing for, so a link is always shown but never a fabricated one.
+ */
+export function pickDirectRetailerLinks(
+  serperResults: SerperResult[],
+  product: string,
+  currency: string,
+  condition: "new" | "likeNew" | "used" = "new"
+): RetailerLink[] {
+  const domains =
+    condition === "new"
+      ? (COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD).marketplace
+      : (USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD);
+
+  const visibleDomains = SHOW_BTECH_COMPARISON ? domains : domains.filter((d) => d !== "btech.com");
+
+  return visibleDomains.map((domain) => {
+    const hit = serperResults.find((r) => urlDomain(r.url).endsWith(domain));
+    return {
+      retailer: RETAILER_DISPLAY_NAMES[domain] || domain,
+      url: hit ? hit.url : buildStoreSearchUrl(domain, product),
+    };
+  });
 }
