@@ -82,11 +82,12 @@ export interface AnalysisResult {
   resaleValueRightNow?: number | null;
   resaleValue2Years?: number | null;
   resaleInsight?: BilingualText;
-  // Per-retailer shopping links (Jumia/Noon/Amazon/optionally B.TECH), built
-  // server-side from the same market-search results used for pricing — no
-  // extra API cost. No price is shown here: prices scraped from search
-  // snippets proved unreliable, so this is a link-out only, not a quote.
-  retailerLinks?: { retailer: string; url: string }[];
+  // Per-retailer price comparison (Jumia/Amazon/Noon/optionally B.TECH),
+  // built server-side from the same market-search results used for pricing —
+  // no extra API cost. Empty/absent when fewer than 2 retailers matched.
+  // Prices come from the currency-aware, noise-filtered extractor (see
+  // extractRetailerPrices in api/_groq_tavily.ts).
+  retailerPrices?: { retailer: string; price: number; url: string; currency?: string }[];
   createdAt: number;
 }
 

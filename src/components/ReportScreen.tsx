@@ -15,66 +15,87 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-// ---- Retailer links (Jumia/Noon/Amazon/optionally B.TECH) ----
-// Renders whenever the report carries at least one matched retailer link
-// (built server-side in api/analyze.ts from the same market-search results
-// already fetched for pricing — no extra API cost per view). No price is
-// shown here — scraped snippet prices proved unreliable, so each card is a
-// simple, honest link-out to compare on the store's own page.
-function RetailerLinksCard({
-  retailerLinks,
+// ---- Retailer price comparison (Jumia/Amazon/Noon/optionally B.TECH) ----
+// Renders only when the report carries 2+ matched retailer prices (built
+// server-side in api/analyze.ts from the same market-search results already
+// fetched for pricing — no extra API cost per view). Prices come from the
+// currency-aware, noise-filtered extractor (extractRetailerPrices), not a
+// naive "smallest number in the text" regex — that's what made prices wrong
+// before.
+function RetailerPriceComparison({
+  retailerPrices,
   lang,
+  cShort,
+  fmtPrice,
 }: {
-  retailerLinks: { retailer: string; url: string }[];
+  retailerPrices: { retailer: string; price: number; url: string; currency?: string }[];
   lang: "ar" | "en";
+  cShort?: string;
+  fmtPrice: (n: unknown) => string;
 }) {
-  const visibleLinks = retailerLinks.filter(
-    (rl) => SHOW_BTECH_COMPARISON || rl.retailer.toUpperCase() !== "B.TECH"
+  const visiblePrices = retailerPrices.filter(
+    (rp) => SHOW_BTECH_COMPARISON || rp.retailer.toUpperCase() !== "B.TECH"
   );
 
-  if (visibleLinks.length === 0) return null;
+  if (visiblePrices.length < 2) return null;
+
+  const cheapest = visiblePrices.reduce((min, rp) => (rp.price < min.price ? rp : min), visiblePrices[0]);
 
   return (
     <div className="mb-4 rounded-xl border border-amber-500/15 bg-[#0B0B0F] p-5">
       <h2 className="flex items-center gap-2 font-serif text-lg font-bold text-amber-400">
         <Search className="h-5 w-5" />
-        {lang === "ar" ? "قارن الأسعار في أكبر المتاجر" : "Compare prices at top retailers"}
+        {lang === "ar" ? "بحثنالك على أفضل سعر متاح" : "We searched for the best available price"}
       </h2>
       <p className="mt-1 mb-4 text-xs text-zinc-500">
         {lang === "ar"
-          ? "دوس على أي متجر عشان تشوف السعر والعروض الحالية عندهم"
-          : "Tap a store to see their current price and offers"}
+          ? "قارنّا السعر ده في أكبر المتاجر المصرية عشانك، آخر تحديث النهارده"
+          : "We compared this price across the biggest Egyptian retailers for you, last checked today"}
       </p>
 
       <div className="space-y-2.5">
-        {visibleLinks.map((rl, i) => (
-          <a
-            key={i}
-            href={rl.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-between rounded-xl border border-zinc-700 bg-zinc-800/40 p-3.5 transition-colors hover:border-amber-500/30 hover:bg-zinc-800/70"
-          >
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-600 text-xs font-bold text-[#0B0B0F]">
-                {rl.retailer.slice(0, 2).toUpperCase()}
-              </span>
-              <div>
-                <span className="block text-sm font-bold text-zinc-100">{rl.retailer}</span>
-                <span className="text-xs font-semibold text-amber-400">
-                  {lang === "ar" ? "مقارنة الأسعار والعروض" : "Compare prices & offers"}
+        {visiblePrices.map((rp, i) => {
+          const isCheapest = rp.retailer === cheapest.retailer && rp.price === cheapest.price;
+          return (
+            <a
+              key={i}
+              href={rp.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center justify-between rounded-xl border p-3.5 transition-colors ${
+                isCheapest
+                  ? "border-emerald-400/40 bg-emerald-500/10 hover:bg-emerald-500/15"
+                  : "border-zinc-700 bg-zinc-800/40 hover:bg-zinc-800/70"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-300 to-amber-600 text-xs font-bold text-[#0B0B0F]">
+                  {rp.retailer.slice(0, 2).toUpperCase()}
                 </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-zinc-100">{rp.retailer}</span>
+                    {isCheapest && (
+                      <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400 ring-1 ring-emerald-500/30">
+                        {lang === "ar" ? "أفضل سعر" : "Best price"}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-base font-bold text-amber-400">
+                    {fmtPrice(rp.price)} {cShort}
+                  </span>
+                </div>
               </div>
-            </div>
-            <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
-          </a>
-        ))}
+              <ExternalLink className="h-4 w-4 shrink-0 text-zinc-500" />
+            </a>
+          );
+        })}
       </div>
 
       <p className="mt-3.5 text-[11px] leading-relaxed text-zinc-500">
         {lang === "ar"
-          ? "الرابط بياخدك لصفحة المنتج على المتجر مباشرة. بعض الروابط شراكة تجارية، وده مش بيأثر على السعر اللي هتدفعه ولا على تقييم 'قرار' للصفقة."
-          : "The link takes you straight to the product page on the store. Some links are commercial partnerships; this doesn't affect the price you pay or Qarari's rating of the deal."}
+          ? "الأسعار من المتاجر مباشرة وممكن تتغير. بعض الروابط شراكة تجارية — ده مش بيأثر على السعر اللي هتدفعه ولا على ترتيب أو تقييم 'قرار' للصفقة. الأسعار المعروضة هي آخر سعر اتفحص مش سعر لحظي مضمون 100%."
+          : "Prices come directly from retailers and may change. Some links are commercial partnerships — this doesn't affect the price you pay or Qarari's ranking or rating of the deal. Prices shown are the last checked price, not a guaranteed real-time price."}
       </p>
     </div>
   );
@@ -84,6 +105,7 @@ export function ReportScreen() {
   const { t, lang, dir, currentReport, navigate, saveToHistory, history, user, session, showToast, isPremium, requireAuth } = useApp();
   const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null);
   const [showFeedbackBox, setShowFeedbackBox] = useState(false);
+  const [isWatched, setIsWatched] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
@@ -139,8 +161,8 @@ export function ReportScreen() {
 
   const handleSave = () => {
     requireAuth(async () => {
-      await saveToHistory(report);
-      showToast(t("saveToHistory") + " ✓");
+      const ok = await saveToHistory(report);
+      showToast(ok ? t("saveToHistory") + " ✓" : (lang === "ar" ? "حصل خطأ، حاول تاني" : "Something went wrong, please try again"));
     });
   };
 
@@ -346,12 +368,14 @@ export function ReportScreen() {
         )}
       </div>
 
-      {/* Retailer links — Jumia/Noon/Amazon/optionally B.TECH, built
-          server-side from the same market-search results, no extra cost */}
-      {report.retailerLinks && report.retailerLinks.length > 0 && (
-        <RetailerLinksCard
-          retailerLinks={report.retailerLinks}
+      {/* Retailer Price Comparison — Jumia/Amazon/Noon/optionally B.TECH,
+          built server-side from the same market-search results, no extra cost */}
+      {report.retailerPrices && report.retailerPrices.length > 1 && (
+        <RetailerPriceComparison
+          retailerPrices={report.retailerPrices}
           lang={lang}
+          cShort={cShort}
+          fmtPrice={fmtPrice}
         />
       )}
 
@@ -708,19 +732,29 @@ export function ReportScreen() {
         <Button
           onClick={() => {
             requireAuth(async () => {
-              await supabase.from("watchlist").insert({
-                user_id: (await supabase.auth.getUser()).data.user?.id,
+              if (!session?.user) return;
+              const { error } = await supabase.from("watchlist").insert({
+                user_id: session.user.id,
                 product: report.product,
                 saved_price: report.offeredPrice,
                 currency: report.currency,
               });
+              if (error) {
+                // Was previously ignored, so the toast below fired even when
+                // the insert failed and nothing was actually saved.
+                console.error("Save to watchlist failed:", error);
+                showToast(lang === "ar" ? "حصل خطأ، حاول تاني" : "Something went wrong, please try again");
+                return;
+              }
+              setIsWatched(true);
               showToast(t("notifyPriceDrop") + " ✓");
             });
           }}
+          disabled={isWatched}
           variant="outline"
-          className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400"
+          className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400 disabled:opacity-50"
         >
-          <Bell className="h-4 w-4" /> {t("notifyPriceDrop")}
+          <Bell className="h-4 w-4" /> {isWatched ? "✓ " + t("notifyPriceDrop") : t("notifyPriceDrop")}
         </Button>
       </div>
 

@@ -39,7 +39,7 @@ function getTrustWeight(url: string): number {
   return 1;
 }
 
-function extractPrices(text: string, title: string, url: string, condition: string): PriceHit[] {
+export function extractPrices(text: string, title: string, url: string, condition: string): PriceHit[] {
   const prices: PriceHit[] = [];
   const numRegex = /\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?/g;
   let match;
@@ -68,6 +68,23 @@ function extractPrices(text: string, title: string, url: string, condition: stri
     }
   }
   return prices;
+}
+
+// Cheapest valid price for a single listing, in the target currency only —
+// used by the per-retailer price comparison (Jumia/Amazon/Noon cards), where
+// we show one price per store and don't want to silently convert currencies.
+// Reuses the same currency-aware, noise-filtered extraction as the market
+// price range above, instead of a naive "smallest number in the text" regex.
+export function extractListingPrice(
+  text: string,
+  title: string,
+  url: string,
+  targetCurrency: SupportedCurrency,
+  condition: string = "new"
+): number | null {
+  const hits = extractPrices(text, title, url, condition).filter((h) => h.currency === targetCurrency);
+  if (hits.length === 0) return null;
+  return Math.min(...hits.map((h) => h.value));
 }
 
 async function getExchangeRate(from: string, to: string): Promise<number> {

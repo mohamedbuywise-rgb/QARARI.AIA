@@ -1,5 +1,5 @@
 import { logStep, logEnvPresence, loggedFetch, loggedJsonParse } from "./_logger.js";
-import { computeMarketPriceRange, formatMarketPriceContext, isSupportedCurrency } from "./_priceExtraction.js";
+import { computeMarketPriceRange, formatMarketPriceContext, isSupportedCurrency, extractListingPrice, type SupportedCurrency } from "./_priceExtraction.js";
 
 const PRIMARY_MODEL = "openai/gpt-oss-120b";
 const FALLBACK_MODEL = "openai/gpt-oss-20b";
@@ -424,16 +424,15 @@ export async function enrichAlternativesWithMarketPrices(
   return { enriched: results, searchQueryCount };
 }
 
-export interface RetailerLink {
+export interface RetailerPrice {
   retailer: string;
+  price: number;
   url: string;
+  currency: string;
 }
 
-// Retailers eligible for the ReportScreen "compare prices" links, matched
-// against each result's hostname. B.TECH is included only behind
-// SHOW_BTECH_COMPARISON. We link out to all of these now (including Noon) —
-// since we no longer display a scraped price on the card (that's what was
-// unreliable), there's no price-accuracy risk left in showing the link.
+// Retailers eligible for the ReportScreen price comparison, matched against
+// each result's hostname. B.TECH is included only behind SHOW_BTECH_COMPARISON.
 function getComparisonRetailers(): { domain: string; name: string }[] {
   const retailers = [
     { domain: "jumia.com.eg", name: "Jumia" },
@@ -456,24 +455,43 @@ function hostnameMatches(url: string, domain: string): boolean {
 }
 
 /**
- * Builds a per-retailer link-out list (Jumia, Amazon, Noon, optionally
+ * Builds a per-retailer price comparison (Jumia/Amazon/Noon, optionally
  * B.TECH) straight from the Search 2 ("Largest Marketplace") results
- * already fetched by smartAdaptiveSearch — no additional Serper query, and
- * no price extraction (that's what made prices unreliable before — this
- * now just points the user to the store's own listing to compare there).
- * Takes the first matching result per domain, which reflects Google's own
- * relevance ranking for that site + product query.
+ * already fetched by smartAdaptiveSearch — no additional Serper query.
+ *
+ * Price extraction reuses the same currency-aware, noise-filtered
+ * extractPrices() logic as the main market-price calculation (see
+ * _priceExtraction.ts) instead of a naive "smallest number in the text"
+ * regex — that naive approach is what made prices unreliable before (it
+ * could latch onto a rating count, a spec number, or an unrelated figure
+ * in the snippet with no currency check at all). Listings whose price
+ * isn't in the report's own currency are skipped rather than silently
+ * converted, so what's shown always matches the currency on screen.
  */
-export function extractRetailerLinks(results: SerperResult[]): RetailerLink[] {
+export function extractRetailerPrices(results: SerperResult[], currency: string): RetailerPrice[] {
   const retailers = getComparisonRetailers();
-  const links: RetailerLink[] = [];
+  const prices: RetailerPrice[] = [];
+  if (!isSupportedCurrency(currency)) return prices;
+  const targetCurrency = currency as SupportedCurrency;
 
   for (const { domain, name } of retailers) {
-    const match = results.find((r) => r.url && hostnameMatches(r.url, domain));
-    if (match) {
-      links.push({ retailer: name, url: match.url });
+    let best: { price: number; url: string } | null = null;
+
+    for (const r of results) {
+      if (!r.url || !hostnameMatches(r.url, domain)) continue;
+
+      const price = extractListingPrice(r.content, r.title, r.url, targetCurrency);
+      if (price === null) continue;
+
+      if (!best || price < best.price) {
+        best = { price, url: r.url };
+      }
+    }
+
+    if (best) {
+      prices.push({ retailer: name, price: best.price, url: best.url, currency });
     }
   }
 
-  return links;
+  return prices;
 }

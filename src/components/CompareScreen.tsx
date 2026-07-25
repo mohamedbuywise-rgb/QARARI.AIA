@@ -36,7 +36,6 @@ export function CompareScreen() {
           <Crown className="h-8 w-8 text-[#0B0B0F]" />
         </div>
         <h2 className="font-serif text-xl font-bold text-amber-400">{t("premium")}</h2>
-        <p className="mt-2 text-sm text-zinc-400">{t("upgradeDesc")}</p>
         <Button onClick={() => navigate("upgrade")} className="mt-6 bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500">
           <Crown className="h-4 w-4" /> {t("subscribeNow")}
         </Button>

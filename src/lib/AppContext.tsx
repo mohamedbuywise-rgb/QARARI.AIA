@@ -17,7 +17,7 @@ interface AppContextType {
   currentCompare: CompareResult | null;
   setCurrentCompare: (r: CompareResult | null) => void;
   history: AnalysisResult[];
-  saveToHistory: (r: AnalysisResult) => Promise<void>;
+  saveToHistory: (r: AnalysisResult) => Promise<boolean>;
   refreshHistory: () => Promise<void>;
   // Local (device-only) history for guests who haven't created an account
   // yet — so a report is never truly lost just because they didn't sign up.
@@ -233,9 +233,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [session, navigate]);
 
-  const saveToHistory = useCallback(async (r: AnalysisResult) => {
-    if (!session?.user) return;
-    
+  const saveToHistory = useCallback(async (r: AnalysisResult): Promise<boolean> => {
+    if (!session?.user) return false;
+
     // Ensure numeric values are never null for the database (Section 2/12)
     const { error } = await supabase.from("analyses").insert({
       user_id: session.user.id,
@@ -250,8 +250,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       full_report: r,
     });
     if (error) {
+      // Surface the real reason (RLS, missing column, etc.) instead of
+      // failing silently while the caller shows a success toast anyway.
       console.error("Save to history failed:", error);
-      return;
+      return false;
     }
 
     await refreshHistory();
@@ -264,6 +266,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .update({ total_money_saved: (row?.total_money_saved || 0) + r.moneySaved })
         .eq("id", session.user.id);
     }
+    return true;
   }, [session, refreshHistory]);
 
   const addToGuestHistory = useCallback((r: AnalysisResult) => {

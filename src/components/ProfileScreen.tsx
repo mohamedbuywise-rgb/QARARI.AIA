@@ -203,7 +203,6 @@ export function ProfileScreen() {
         <div className="mb-6 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-transparent p-6 text-center">
           <Crown className="mx-auto mb-2 h-8 w-8 text-amber-400" />
           <h3 className="font-serif text-lg font-bold text-amber-400">{t("premium")}</h3>
-          <p className="mt-1 text-sm text-zinc-400">{t("upgradeDesc")}</p>
           <Button onClick={() => navigate("upgrade")} className="mt-4 bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] hover:from-amber-300 hover:to-amber-500">
             <Zap className="h-4 w-4" /> {t("subscribeNow")}
           </Button>
