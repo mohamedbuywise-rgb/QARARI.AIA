@@ -279,7 +279,7 @@ async function smartAdaptiveSearch(product: string, currency: string, region: { 
   return { results: state.allResults, searchCount: state.searchCount, retailerSearchResults };
 }
 
-async function callGroqModel(model: string, system: string, user: string, jsonMode: boolean = true) {
+async function callGroqModel(model: string, system: string, user: string) {
   const apiKey = process.env.GROQ_API_KEY;
   const res = await loggedFetch("groq.chat", "https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -288,15 +288,56 @@ async function callGroqModel(model: string, system: string, user: string, jsonMo
       model,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       temperature: 0.1,
-      // Compound systems aren't guaranteed to support strict JSON-object
-      // mode the way plain chat models do, so callers targeting
-      // COMPOUND_MODEL pass jsonMode=false and rely on prompt instructions
-      // + defensive parsing instead.
-      ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+      response_format: { type: "json_object" },
     }),
   });
   if (!res.ok) throw new Error(`Groq error ${res.status}`);
   return res.json();
+}
+
+/**
+ * Dedicated caller for groq/compound — deliberately separate from
+ * callGroqModel above because Compound has different needs:
+ * - No response_format (not guaranteed to support strict JSON mode).
+ * - A much higher max_completion_tokens: the tool-use loop (searching +
+ *   reading results + writing the final answer) burns tokens fast, and the
+ *   default limit was cutting Compound off mid-answer — producing a
+ *   truncated, non-JSON response that failed to parse and silently fell
+ *   back to "not available".
+ * - Logs `executed_tools` from the response so it's provable (in the
+ *   server logs) whether Compound actually ran a live search or not, since
+ *   Groq's usage dashboard attributes Compound's token usage to its
+ *   underlying constituent models rather than showing "groq/compound" as
+ *   its own line item — the dashboard alone can't answer "did it search?".
+ */
+async function callCompoundModel(model: string, system: string, user: string): Promise<{ content: string; executedToolCount: number; finishReason: string | null }> {
+  const apiKey = process.env.GROQ_API_KEY;
+  const res = await loggedFetch(`groq.${model}`, "https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      temperature: 0.3,
+      max_completion_tokens: 4096,
+    }),
+  });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`Groq Compound HTTP ${res.status}: ${bodyText.slice(0, 500)}`);
+  }
+  const json = await res.json();
+  const choice = json?.choices?.[0];
+  const executedTools = Array.isArray(choice?.message?.executed_tools) ? choice.message.executed_tools : [];
+  console.log(`[compound:${model}] executed_tools=${executedTools.length} finish_reason=${choice?.finish_reason}`);
+  if (executedTools.length === 0) {
+    console.warn(`[compound:${model}] Compound answered WITHOUT calling its search tool at all — likely answered from training data or declined to search. Raw content starts with:`, String(choice?.message?.content || "").slice(0, 200));
+  }
+  return {
+    content: choice?.message?.content || "",
+    executedToolCount: executedTools.length,
+    finishReason: choice?.finish_reason || null,
+  };
 }
 
 /**
@@ -373,35 +414,44 @@ export async function getFairPriceRangeViaCompound(
   specs: string
 ): Promise<FairPriceRange> {
   const conditionLabel = condition === "used" ? "used/second-hand" : condition === "likeNew" ? "like-new/open-box" : "new";
-  const system = "You are a market-pricing research analyst with live web search access. Respond with ONLY a single valid JSON object — no prose, no markdown code fences.";
-  const user = `Research the CURRENT fair market price range for this exact product in ${currency}, condition: ${conditionLabel}.
+  const system = "You are a market-pricing research analyst. You MUST use your web search tool before answering — you are never allowed to answer a pricing question from memory/training data alone, because prices change constantly and yours is out of date. Your final message must contain ONLY a single valid JSON object — no prose, no markdown code fences, no explanation before or after it.";
+  const user = `Use your web search tool NOW to find the CURRENT fair market price range for this exact product in ${currency}, condition: ${conditionLabel}. Do at least one real search before answering — do not skip straight to an answer.
 
 PRODUCT: ${product}${specs ? `\nVARIANT/SPECS: ${specs}` : ""}
 
-Search the web yourself for real, current retail listings. Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
+Search for real, current retail listings. Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
 
-Return ONLY this JSON shape, nothing else:
+After searching, respond with ONLY this JSON shape, nothing else — no markdown table, no citations, no commentary:
 { "min": number | null, "max": number | null, "summary": { "ar": string, "en": string } }
 
-- min/max: the current fair price range in ${currency}. Return null for both if you find no reliable pricing signal from your search — never invent a number.
+- min/max: the current fair price range in ${currency}, based on what your search actually found. Return null for both ONLY if your search genuinely turned up no reliable pricing signal — never invent a number, and never skip the search and guess instead.
 - summary: ONE short natural sentence (in both Arabic and English) stating the range you found. If min/max are null, say plainly that no reliable current price was found instead of describing a range.`;
 
-  try {
-    const json = await callGroqModel(COMPOUND_MODEL, system, user, false);
-    const raw = json?.choices?.[0]?.message?.content || "";
-    const parsed = loggedJsonParse(`compound.price[${product}]`, extractJsonObject(raw));
-    const min = typeof parsed?.min === "number" ? parsed.min : null;
-    const max = typeof parsed?.max === "number" ? parsed.max : null;
-    const mid = min !== null && max !== null ? Math.round((min + max) / 2) : null;
-    const summary =
-      parsed?.summary && typeof parsed.summary === "object"
-        ? { ar: typeof parsed.summary.ar === "string" ? parsed.summary.ar : "", en: typeof parsed.summary.en === "string" ? parsed.summary.en : "" }
-        : null;
-    return { min, max, mid, summary };
-  } catch (e) {
-    console.error(`[getFairPriceRangeViaCompound] Compound pricing failed for "${product}" (non-fatal):`, e);
-    return { min: null, max: null, mid: null, summary: null };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { content, executedToolCount } = await callCompoundModel(COMPOUND_MODEL, system, user);
+      const parsed = loggedJsonParse(`compound.price[${product}]#${attempt}`, extractJsonObject(content));
+      const min = typeof parsed?.min === "number" ? parsed.min : null;
+      const max = typeof parsed?.max === "number" ? parsed.max : null;
+      const mid = min !== null && max !== null ? Math.round((min + max) / 2) : null;
+      const summary =
+        parsed?.summary && typeof parsed.summary === "object"
+          ? { ar: typeof parsed.summary.ar === "string" ? parsed.summary.ar : "", en: typeof parsed.summary.en === "string" ? parsed.summary.en : "" }
+          : null;
+      if (min === null && max === null && executedToolCount === 0 && attempt === 1) {
+        // It answered null WITHOUT even searching — that's Compound skipping
+        // the tool, not a genuine "no data found". Worth one retry with a
+        // fresh attempt before accepting it.
+        console.warn(`[getFairPriceRangeViaCompound] "${product}": null result with zero tool calls on attempt 1 — retrying once.`);
+        continue;
+      }
+      return { min, max, mid, summary };
+    } catch (e) {
+      console.error(`[getFairPriceRangeViaCompound] Compound pricing failed for "${product}" on attempt ${attempt} (non-fatal):`, e);
+      if (attempt === 2) return { min: null, max: null, mid: null, summary: null };
+    }
   }
+  return { min: null, max: null, mid: null, summary: null };
 }
 
 /**
