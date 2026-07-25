@@ -107,17 +107,24 @@ function validateAndNormalizeAnalysis(parsed: any): { ok: true; data: any } | { 
     return { ok: false, issues };
   }
 
-  // marketFairPriceMid: derive from min/max if the model omitted it (as null)
-  // but both bounds are real numbers. Otherwise trust whatever the model gave
-  // (including null, when neither bound is available).
+  // marketFairPriceMin/Max/Mid: normalize — ensure all three are number | null.
+  // If the model returned a non-null mid, trust it. Otherwise compute from
+  // min/max when both are available. This guarantees the UI never sees
+  // undefined/missing values for any of the three.
+  const marketFairPriceMin: number | null = isNumberOrNull(parsed.marketFairPriceMin) ? parsed.marketFairPriceMin : null;
+  const marketFairPriceMax: number | null = isNumberOrNull(parsed.marketFairPriceMax) ? parsed.marketFairPriceMax : null;
   let marketFairPriceMid: number | null = parsed.marketFairPriceMid;
-  if (marketFairPriceMid === null && typeof parsed.marketFairPriceMin === "number" && typeof parsed.marketFairPriceMax === "number") {
-    marketFairPriceMid = Math.round((parsed.marketFairPriceMin + parsed.marketFairPriceMax) / 2);
+  if (!isNumberOrNull(marketFairPriceMid) || marketFairPriceMid === null) {
+    marketFairPriceMid = marketFairPriceMin !== null && marketFairPriceMax !== null
+      ? Math.round((marketFairPriceMin + marketFairPriceMax) / 2)
+      : null;
   }
 
   // Non-critical fields: normalize to safe defaults instead of throwing 502.
   const data = {
     ...parsed,
+    marketFairPriceMin,
+    marketFairPriceMax,
     marketFairPriceMid,
     marketPriceSummary: bilingualStrings(parsed.marketPriceSummary),
     reasoningPoints: bilingualArrays(parsed.reasoningPoints),
@@ -413,6 +420,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed.marketFairPriceMin = marketPrice.min;
       parsed.marketFairPriceMax = marketPrice.max;
       parsed.marketFairPriceMid = marketPrice.mid;
+      console.log(`[/api/analyze] Compound market price enforced: min=${marketPrice.min}, max=${marketPrice.max}, mid=${marketPrice.mid} (was ${aiResult.data?.marketFairPriceMin}/${aiResult.data?.marketFairPriceMax}/${aiResult.data?.marketFairPriceMid} from narrative model)`);
 
       // ---- STEP 3: Serper's ONLY job — direct listing links (Jumia/Amazon/
       // Noon, optionally B.TECH) for the main product. Never used for
@@ -470,6 +478,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Field-level shape validation + normalization (see validateAndNormalizeAnalysis above).
+    console.log(`[/api/analyze] Pre-validation: marketFairPriceMin=${parsed.marketFairPriceMin}, marketFairPriceMax=${parsed.marketFairPriceMax}, marketFairPriceMid=${parsed.marketFairPriceMid}`);
     const validation = validateAndNormalizeAnalysis(parsed);
     if (!validation.ok) {
       console.error("[/api/analyze] Validation failed");
@@ -488,6 +497,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const marketFairPriceMid: number | null = parsed.marketFairPriceMid;
     const moneySaved = marketFairPriceMid === null ? null : Math.max(0, marketFairPriceMid - Number(offeredPrice));
+    console.log(`[/api/analyze] Post-validation: marketFairPriceMin=${parsed.marketFairPriceMin}, marketFairPriceMax=${parsed.marketFairPriceMax}, marketFairPriceMid=${parsed.marketFairPriceMid}, moneySaved=${moneySaved}`);
 
     // ---- Community insights (Section 27 — REAL social proof, never fabricated) ----
     // Log this user's real offered price as an anonymous event, then look at
@@ -538,8 +548,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       offeredPrice: Number(offeredPrice),
       currency,
       condition,
-      ...parsed,
+      marketFairPriceMin: parsed.marketFairPriceMin,
+      marketFairPriceMax: parsed.marketFairPriceMax,
       marketFairPriceMid,
+      ...parsed,
       moneySaved,
       communityInsights,
       createdAt: Date.now(),
