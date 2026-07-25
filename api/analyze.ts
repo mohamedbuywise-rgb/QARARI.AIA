@@ -434,8 +434,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ---- STEP 4: exactly 4 alternatives, hard cap enforced here regardless
-      // of what the model returned. Each gets Serper direct links + a
-      // Compound-derived fair price range.
+      // of what the model returned. Each gets Serper direct store links only
+      // (no Compound call) — the user clicks through to see the price.
       if (Array.isArray(parsed.betterAlternatives)) {
         parsed.betterAlternatives = parsed.betterAlternatives.slice(0, 4);
       } else {

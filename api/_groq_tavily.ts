@@ -501,26 +501,6 @@ After searching, respond with ONLY this JSON shape, nothing else — no markdown
   return { min: null, max: null, mid: null, summary: null };
 }
 
-/**
- * Same Compound-driven pricing as getFairPriceRangeViaCompound, but for the
- * (exactly 4) alternatives — one Compound call per alternative, run in
- * parallel, each doing its own live search. Never batched into a single
- * call, since each alternative needs its own independent live search.
- */
-export async function getFairPriceRangesForAlternativesViaCompound(
-  altNames: string[],
-  currency: string,
-  condition: "new" | "likeNew" | "used"
-): Promise<Record<string, { min: number | null; max: number | null; mid: number | null }>> {
-  const entries = await Promise.all(
-    altNames.map(async (name) => {
-      const r = await getFairPriceRangeViaCompound(name, currency, condition, "");
-      return [name, { min: r.min, max: r.max, mid: r.mid }] as const;
-    })
-  );
-  return Object.fromEntries(entries);
-}
-
 export async function callAiWithFallback(
   prompt: string,
   imageBase64?: any,
@@ -603,9 +583,10 @@ export interface AlternativeInput {
 
 export interface AlternativeWithLinks extends AlternativeInput {
   searchLinks: RetailerLink[];
-  // Fair price range for the alternative, derived by Groq Compound via its
-  // own live web search (see getFairPriceRangesForAlternativesViaCompound).
-  // Null when Compound finds no reliable pricing signal.
+  // Always null now — alternatives are link-only (see
+  // attachLinksAndPricesToAlternatives). Kept in the type/UI so the report
+  // component doesn't need changes; the fair-price block just won't render
+  // for alternatives since ReportScreen only shows it when these are numbers.
   fairPriceMin: number | null;
   fairPriceMax: number | null;
   fairPriceMid: number | null;
@@ -673,11 +654,18 @@ export async function fetchMainProductRetailerLinks(
 }
 
 /**
- * For each of the (exactly 4) alternatives: (1) Serper fetches direct
- * listing links only — same marketplace domains as the main product, never
- * used for pricing — and (2) Groq Compound independently researches and
- * returns the fair price range via its own live web search. The two are
- * merged here into the final alternative card the report displays.
+ * For each of the (exactly 4) alternatives: Serper fetches direct listing
+ * links only (same marketplace domains as the main product) so the user can
+ * click through and see the price themselves at the store.
+ *
+ * Deliberately NOT calling Groq Compound here anymore. Alternatives used to
+ * get their own Compound-derived fair price range (4 parallel live-search
+ * calls per report), but that was the direct cause of the 429/413 errors in
+ * the logs: 4 simultaneous groq/compound calls blew past the org's
+ * tokens-per-minute budget for the model behind Compound, on top of adding
+ * ~20-50s to every request. The main product still gets its own Compound
+ * price range via getFairPriceRangeViaCompound — that's the number that
+ * actually matters for the verdict — alternatives are link-only now.
  */
 export async function attachLinksAndPricesToAlternatives(
   alternatives: AlternativeInput[],
@@ -687,32 +675,16 @@ export async function attachLinksAndPricesToAlternatives(
 ): Promise<AlternativeWithLinks[]> {
   if (alternatives.length === 0) return [];
 
-  // Serper: direct listing links only.
   const perAltResults = await Promise.all(
     alternatives.map((alt) => searchAlternativeListings(alt.name, currency, region, condition))
   );
-  const withLinks = alternatives.map((alt, i) => ({
+  return alternatives.map((alt, i) => ({
     ...alt,
     searchLinks: pickDirectRetailerLinks(perAltResults[i], alt.name, currency, condition),
+    fairPriceMin: null,
+    fairPriceMax: null,
+    fairPriceMid: null,
   }));
-
-  // Groq Compound (background): fair price range for each alternative.
-  try {
-    const priceMap = await getFairPriceRangesForAlternativesViaCompound(
-      alternatives.map((a) => a.name),
-      currency,
-      condition
-    );
-    return withLinks.map((alt) => ({
-      ...alt,
-      fairPriceMin: priceMap[alt.name]?.min ?? null,
-      fairPriceMax: priceMap[alt.name]?.max ?? null,
-      fairPriceMid: priceMap[alt.name]?.mid ?? null,
-    }));
-  } catch (e) {
-    console.error("[attachLinksAndPricesToAlternatives] Compound pricing failed (non-fatal):", e);
-    return withLinks.map((alt) => ({ ...alt, fairPriceMin: null, fairPriceMax: null, fairPriceMid: null }));
-  }
 }
 
 // Fallback-only path (no live search) — kept for when researchAndPriceAlternatives
