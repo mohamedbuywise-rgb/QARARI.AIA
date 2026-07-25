@@ -310,17 +310,53 @@ async function callGroqModel(model: string, system: string, user: string) {
  *   underlying constituent models rather than showing "groq/compound" as
  *   its own line item — the dashboard alone can't answer "did it search?".
  */
-async function callCompoundModel(model: string, system: string, user: string): Promise<{ content: string; executedToolCount: number; finishReason: string | null }> {
+// Mapping from currency codes to Groq Web Search `search_settings.country` values.
+// The web-search tool internally boosts results from the specified country,
+// so e.g. "Egypt" makes Groq prioritize amazon.eg / jumia.com.eg pricing
+// over amazon.com US listings — which is exactly what we need for
+// per-currency fair-price ranges.
+const CURRENCY_GROQ_COUNTRY: Record<string, string> = {
+  EGP: "Egypt",
+  SAR: "Saudi Arabia",
+  AED: "United Arab Emirates",
+  KWD: "Kuwait",
+  USD: "United States",
+  EUR: "Germany",
+};
+
+// Helper that maps a retailer domain to a Groq `search_settings.include_domains`
+// entry. The Groq web-search tool only accepts a plain list of domains (no
+// `site:` prefix), so we strip that when building the settings object.
+function buildGroqSearchSettings(currency: string, condition: "new" | "likeNew" | "used"): Record<string, any> {
+  const country = CURRENCY_GROQ_COUNTRY[currency];
+  const retailers = COUNTRY_RETAILERS[currency] || COUNTRY_RETAILERS.USD;
+  const usedSites = USED_MARKETPLACES[currency] || USED_MARKETPLACES.USD;
+  const domains = condition === "new" ? retailers.marketplace : usedSites;
+  const settings: Record<string, any> = {};
+  if (country) settings.country = country;
+  // For new-condition searches, restrict to known marketplace domains so
+  // Groq's web search doesn't drift into unrelated blogs / forums.
+  if (condition === "new" && domains.length > 0) {
+    settings.include_domains = domains.map((d: string) => d);
+  }
+  return settings;
+}
+
+async function callCompoundModel(model: string, system: string, user: string, searchSettings?: Record<string, any>): Promise<{ content: string; executedToolCount: number; finishReason: string | null }> {
   const apiKey = process.env.GROQ_API_KEY;
+  const requestBody: Record<string, any> = {
+    model,
+    messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    temperature: 0.3,
+    max_completion_tokens: 4096,
+  };
+  if (searchSettings && Object.keys(searchSettings).length > 0) {
+    requestBody.search_settings = searchSettings;
+  }
   const res = await loggedFetch(`groq.${model}`, "https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      temperature: 0.3,
-      max_completion_tokens: 4096,
-    }),
+    body: JSON.stringify(requestBody),
   });
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
@@ -422,18 +458,29 @@ PRODUCT: ${product}${specs ? `\nVARIANT/SPECS: ${specs}` : ""}
 Search for real, current retail listings. Ignore trade-in value, financing/installment/monthly-payment figures, insurance/warranty prices, accessory prices, coupon/discount amounts, and shipping/tax fees — only actual full selling-price listings for the product itself count. If a variant/spec is given above, the range MUST reflect that variant only, not other configurations.
 
 After searching, respond with ONLY this JSON shape, nothing else — no markdown table, no citations, no commentary:
-{ "min": number | null, "max": number | null, "summary": { "ar": string, "en": string } }
+{ "min": number | null, "max": number | null, "mid": number | null, "summary": { "ar": string, "en": string } }
 
-- min/max: the current fair price range in ${currency}, based on what your search actually found. Return null for both ONLY if your search genuinely turned up no reliable pricing signal — never invent a number, and never skip the search and guess instead.
-- summary: ONE short natural sentence (in both Arabic and English) stating the range you found. If min/max are null, say plainly that no reliable current price was found instead of describing a range.`;
+- min: the lowest reliable selling price in ${currency} you found for this exact product/variant.
+- max: the highest reliable selling price in ${currency} you found for this exact product/variant.
+- mid: the fair average/midpoint price in ${currency} based on what your search found — calculate this as the midpoint between min and max, or as the most common/representative price you saw. Return null ONLY if you genuinely found no reliable pricing signal.
+- summary: ONE short natural sentence (in both Arabic and English) stating the range you found. If min/max/mid are null, say plainly that no reliable current price was found instead of describing a range.`;
+
+  const searchSettings = buildGroqSearchSettings(currency, condition);
+  if (Object.keys(searchSettings).length > 0) {
+    console.log(`[getFairPriceRangeViaCompound] search_settings for "${product}":`, JSON.stringify(searchSettings));
+  }
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const { content, executedToolCount } = await callCompoundModel(COMPOUND_MODEL, system, user);
+      const { content, executedToolCount } = await callCompoundModel(COMPOUND_MODEL, system, user, searchSettings);
       const parsed = loggedJsonParse(`compound.price[${product}]#${attempt}`, extractJsonObject(content));
       const min = typeof parsed?.min === "number" ? parsed.min : null;
       const max = typeof parsed?.max === "number" ? parsed.max : null;
-      const mid = min !== null && max !== null ? Math.round((min + max) / 2) : null;
+      const modelMid = typeof parsed?.mid === "number" ? parsed.mid : null;
+      // Trust the model's own midpoint when it provides one; otherwise
+      // fall back to computing it locally from min/max (keeps behavior
+      // identical if the model happens to skip the mid field).
+      const mid = modelMid !== null ? modelMid : (min !== null && max !== null ? Math.round((min + max) / 2) : null);
       const summary =
         parsed?.summary && typeof parsed.summary === "object"
           ? { ar: typeof parsed.summary.ar === "string" ? parsed.summary.ar : "", en: typeof parsed.summary.en === "string" ? parsed.summary.en : "" }
@@ -464,11 +511,11 @@ export async function getFairPriceRangesForAlternativesViaCompound(
   altNames: string[],
   currency: string,
   condition: "new" | "likeNew" | "used"
-): Promise<Record<string, { min: number | null; max: number | null }>> {
+): Promise<Record<string, { min: number | null; max: number | null; mid: number | null }>> {
   const entries = await Promise.all(
     altNames.map(async (name) => {
       const r = await getFairPriceRangeViaCompound(name, currency, condition, "");
-      return [name, { min: r.min, max: r.max }] as const;
+      return [name, { min: r.min, max: r.max, mid: r.mid }] as const;
     })
   );
   return Object.fromEntries(entries);
@@ -561,6 +608,7 @@ export interface AlternativeWithLinks extends AlternativeInput {
   // Null when Compound finds no reliable pricing signal.
   fairPriceMin: number | null;
   fairPriceMax: number | null;
+  fairPriceMid: number | null;
 }
 
 // One live marketplace-scoped Serper search for a single alternative's name
@@ -659,10 +707,11 @@ export async function attachLinksAndPricesToAlternatives(
       ...alt,
       fairPriceMin: priceMap[alt.name]?.min ?? null,
       fairPriceMax: priceMap[alt.name]?.max ?? null,
+      fairPriceMid: priceMap[alt.name]?.mid ?? null,
     }));
   } catch (e) {
     console.error("[attachLinksAndPricesToAlternatives] Compound pricing failed (non-fatal):", e);
-    return withLinks.map((alt) => ({ ...alt, fairPriceMin: null, fairPriceMax: null }));
+    return withLinks.map((alt) => ({ ...alt, fairPriceMin: null, fairPriceMax: null, fairPriceMid: null }));
   }
 }
 
@@ -678,6 +727,7 @@ export function attachSearchLinksToAlternatives(
     searchLinks: buildRetailerSearchLinks(alt.name, currency),
     fairPriceMin: null,
     fairPriceMax: null,
+    fairPriceMid: null,
   }));
 }
 
