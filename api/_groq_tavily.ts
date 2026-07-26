@@ -434,7 +434,8 @@ export async function classifyProductCategory(productName: string): Promise<Icon
   }
 }
 
-
+/**
+ * Calls the primary analysis model to generate the full purchase-decision analysis:
  * pros/cons, hidden risks, alternatives, negotiation script, resale value.
  * Deliberately does NOT run any Serper search and is NOT responsible for
  * deriving the fair price range itself: the caller must supply the
