@@ -1,7 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useApp } from "@/lib/AppContext";
-import { getCategoryIcon } from "@/lib/categoryIcons";
-import { AnalyzingStream } from "@/components/AnalyzingStream";
+import { getCategoryIcon, getIconByCategory } from "@/lib/categoryIcons";
 import { getVariantChipGroups } from "@/lib/variantChips";
 import { currencies, FREE_MONTHLY_LIMIT } from "@/lib/types";
 import { getDemoReport } from "@/lib/analysisEngine";
@@ -27,6 +26,7 @@ export function InputScreen() {
   const [condition, setCondition] = useState("new");
   const [photo, setPhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [maxScans, setMaxScans] = useState<number>(FREE_MONTHLY_LIMIT);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -123,8 +123,57 @@ export function InputScreen() {
     }
   };
 
-  const Icon = useMemo(() => getCategoryIcon(product), [product]);
+  const localIcon = useMemo(() => getCategoryIcon(product), [product]);
   const variantChipGroups = useMemo(() => getVariantChipGroups(product), [product]);
+
+  // "Smart" product icon: the local keyword match above is instant and
+  // covers the common cases, but it's a fixed keyword list and misses
+  // anything not on it (falling back to the generic box icon). To make the
+  // icon feel genuinely smart, we ask Groq (a fast, tiny classification
+  // call — see api/user.ts?action=classify-icon) to upgrade the icon in the
+  // background once the user pauses typing. This NEVER blocks or delays the
+  // UI: the local icon renders immediately and stays until (and unless) the
+  // AI call resolves; a slow network or a failed/timed-out call just means
+  // the local icon is kept, never a stuck spinner or empty icon.
+  const [aiCategory, setAiCategory] = useState<string | null>(null);
+  useEffect(() => {
+    setAiCategory(null); // reset the AI upgrade whenever the product name changes
+    const trimmed = product.trim();
+    if (trimmed.length < 2) return;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000); // hard cap so a slow call never lingers
+    const debounce = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/user?action=classify-icon", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productName: trimmed }),
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.category) setAiCategory(data.category);
+      } catch {
+        // Silent — the local keyword icon is already showing, so a failed
+        // or aborted classification call is never user-visible.
+      } finally {
+        clearTimeout(timeout);
+      }
+    }, 500); // wait for a pause in typing before spending an AI call
+
+    return () => {
+      clearTimeout(debounce);
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [product]);
+
+  // Prefer the AI category only when it actually identified something
+  // specific — if Groq comes back with "other" but the local keyword match
+  // already found a concrete icon, keep the more specific local one instead
+  // of downgrading to the generic box.
+  const Icon = aiCategory && aiCategory !== "other" ? getIconByCategory(aiCategory) : localIcon;
 
   // Tapping a chip appends it to specs (e.g. "128GB") instead of the user
   // having to type it. Avoids adding the same value twice.
@@ -149,7 +198,7 @@ export function InputScreen() {
       try {
         const headers: Record<string, string> = {};
         if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
-        const res = await fetch("/api/scans-remaining", { headers });
+        const res = await fetch("/api/user?action=scans-remaining", { headers });
         const data = await res.json();
         setRemaining(data.unlimited ? null : data.remaining);
         if (typeof data.max === "number") setMaxScans(data.max);
@@ -240,6 +289,39 @@ export function InputScreen() {
     setCurrentReport(getDemoReport());
     navigate("report");
   };
+
+  // Analysis takes ~30-40 seconds (live price research + AI reasoning), so a
+  // static "Analyzing..." label makes the screen feel frozen. Rotate through
+  // a few reassuring, specific status phrases while `loading` is true so the
+  // person can see real progress is happening in the background.
+  const loadingMessages =
+    lang === "ar"
+      ? [
+          "جاري فحص الأسعار بالذكاء الاصطناعي...",
+          "نجمع بيانات السوق حالياً...",
+          "نقارن بأسعار المتاجر الموثوقة...",
+          "نحسب أفضل سعر عادل للمنتج...",
+          "قريبًا يكتمل التقرير...",
+        ]
+      : [
+          "Analyzing prices with AI...",
+          "Gathering live market data...",
+          "Comparing trusted retailer prices...",
+          "Calculating the fairest price...",
+          "Almost done with your report...",
+        ];
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingMessageIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setLoadingMessageIndex((i) => (i + 1) % loadingMessages.length);
+    }, 3500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, lang]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
@@ -449,12 +531,12 @@ export function InputScreen() {
           <Button
             onClick={handleSubmit}
             disabled={loading}
-            className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500 disabled:opacity-50"
+            className="w-full bg-gradient-to-r from-amber-400 to-amber-600 text-[#0B0B0F] font-bold hover:from-amber-300 hover:to-amber-500 disabled:opacity-90"
           >
             {loading ? (
               <span className="flex items-center gap-2">
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#0B0B0F] border-t-transparent" />
-                {lang === "ar" ? "جاري التحليل..." : "Analyzing..."}
+                <span key={loadingMessageIndex}>{loadingMessages[loadingMessageIndex]}</span>
               </span>
             ) : quotaExceeded ? (
               <><Crown className="h-4 w-4" /> {t("upgrade")}</>
@@ -463,7 +545,20 @@ export function InputScreen() {
             )}
           </Button>
 
-          {loading && <AnalyzingStream lang={lang} />}
+          {/* Analysis progress skeleton — gives a visible sense of a
+              multi-step process running (price research → AI reasoning →
+              report assembly) instead of a single frozen spinner. */}
+          {loading && (
+            <div className="space-y-2 rounded-xl border border-amber-500/10 bg-zinc-900/40 p-3">
+              {[0, 1, 2].map((row) => (
+                <div
+                  key={row}
+                  className="h-2.5 animate-pulse rounded-full bg-gradient-to-r from-zinc-700/70 via-zinc-600/50 to-zinc-700/70"
+                  style={{ width: `${85 - row * 15}%`, animationDelay: `${row * 150}ms` }}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Compare Button */}
           <Button
@@ -567,7 +662,7 @@ export function InputScreen() {
                       <Mic className="h-5 w-5" />
                     </button>
                     <button
-                      onClick={sendChat}
+                      onClick={() => sendChat()}
                       disabled={chatLoading || chatLimitHit || !chatInput.trim()}
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 text-black hover:brightness-110 disabled:opacity-50"
                     >

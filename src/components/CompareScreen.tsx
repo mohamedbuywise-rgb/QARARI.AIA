@@ -53,7 +53,7 @@ export function CompareScreen() {
     }
     setLoading(true);
     try {
-      const res = await fetch("/api/compare", {
+      const res = await fetch("/api/user?action=compare", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

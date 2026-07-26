@@ -18,7 +18,7 @@ interface WatchlistRow {
 }
 
 export function WatchlistScreen() {
-  const { t, lang, dir, navigate, user, showToast } = useApp();
+  const { t, lang, dir, navigate, session, authLoading, showToast } = useApp();
   const [rows, setRows] = useState<WatchlistRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -29,17 +29,29 @@ export function WatchlistScreen() {
   };
 
   useEffect(() => {
-    if (!user) {
+    // Wait for the auth session to finish resolving before deciding anything.
+    // Previously this checked the (slower, separately-fetched) `user` profile
+    // object instead of `session`, so on a fresh page load it would briefly
+    // see "not logged in" and bounce to /login or render an empty list even
+    // though the person WAS signed in — the profile just hadn't arrived yet.
+    // Checking `session` (available the moment auth resolves) plus
+    // `authLoading` fixes both the false redirect and the "flashes empty"
+    // symptom.
+    if (authLoading) return;
+
+    if (!session?.user) {
       navigate("login");
       return;
     }
+
+    const userId = session.user.id;
     let cancelled = false;
     async function load() {
       setLoading(true);
       const { data, error } = await supabase
         .from("watchlist")
         .select("*")
-        .eq("user_id", user!.id)
+        .eq("user_id", userId)
         .eq("active", true)
         .order("created_at", { ascending: false });
       if (!cancelled) {
@@ -51,16 +63,32 @@ export function WatchlistScreen() {
     return () => {
       cancelled = true;
     };
-  }, [user, navigate]);
+  }, [session, authLoading, navigate]);
 
   const stopTracking = async (row: WatchlistRow) => {
+    if (!session?.user) return;
     setRemovingId(row.id);
-    // Soft-delete: flip active=false so the daily cron stops checking it.
-    // (There's no delete RLS policy on watchlist, only insert/select/update.)
-    const { error } = await supabase.from("watchlist").update({ active: false }).eq("id", row.id);
-    if (!error) {
+    // Permanently delete the row (not a soft-delete) so unfollowing is final —
+    // it can never reappear after a reload. We also request the deleted row
+    // back with .select() so we can tell a *real* success (row actually
+    // removed server-side) apart from a silent no-op: if Row Level Security
+    // or a stale/expired session ever blocked the delete, PostgREST would
+    // otherwise return 200 with zero rows and no error, and the old
+    // optimistic-only UI update would have hidden that failure — the item
+    // would then reappear on the next reload, which is exactly the bug
+    // being fixed here.
+    const { data, error } = await supabase
+      .from("watchlist")
+      .delete()
+      .eq("id", row.id)
+      .eq("user_id", session.user.id)
+      .select();
+
+    if (!error && data && data.length > 0) {
       setRows((prev) => prev.filter((r) => r.id !== row.id));
       showToast(t("stoppedTracking"));
+    } else {
+      showToast(lang === "ar" ? "تعذر إلغاء المتابعة، حاول مرة أخرى" : "Couldn't unfollow, please try again");
     }
     setRemovingId(null);
   };

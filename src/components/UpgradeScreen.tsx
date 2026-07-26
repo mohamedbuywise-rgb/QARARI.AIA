@@ -54,7 +54,7 @@ export function UpgradeScreen() {
       const { error: uploadError } = await supabase.storage.from("screenshots").upload(path, screenshotFile);
       if (uploadError) throw uploadError;
 
-      const res = await fetch("/api/subscribe", {
+      const res = await fetch("/api/user?action=subscribe", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

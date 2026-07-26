@@ -236,16 +236,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const saveToHistory = useCallback(async (r: AnalysisResult): Promise<boolean> => {
     if (!session?.user) return false;
 
-    // The row's id MUST be the report's own id (r.id, generated once in
-    // api/analyze.ts), not whatever the "analyses" table's default
-    // gen_random_uuid() would assign. Previously the id column was left
-    // unset, so refreshHistory()'s `{ ...row.full_report, id: row.id }`
-    // overwrote it with a brand-new DB-generated id that never matched
-    // currentReport.id. That silently broke the "already saved" check
-    // (isSaved in ReportScreen.tsx), so the Save button never flipped to
-    // its saved state and re-clicking it kept inserting duplicate rows.
+    // Ensure numeric values are never null for the database (Section 2/12)
     const { error } = await supabase.from("analyses").insert({
-      id: r.id,
       user_id: session.user.id,
       product: r.product,
       offered_price: r.offeredPrice,
@@ -258,14 +250,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       full_report: r,
     });
     if (error) {
-      // Unique-violation on id means this exact report is already saved
-      // (e.g. a rapid double-click before local state caught up) — treat
-      // that as success rather than surfacing a scary error toast for
-      // something that isn't actually a failure.
-      if (error.code === "23505") {
-        await refreshHistory();
-        return true;
-      }
       // Surface the real reason (RLS, missing column, etc.) instead of
       // failing silently while the caller shows a success toast anyway.
       console.error("Save to history failed:", error);

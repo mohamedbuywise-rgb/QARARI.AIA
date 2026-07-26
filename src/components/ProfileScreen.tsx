@@ -16,7 +16,7 @@ export function ProfileScreen() {
     async function fetchUsage() {
       if (!session?.access_token) return;
       try {
-        const res = await fetch("/api/scans-remaining", { headers: { Authorization: `Bearer ${session.access_token}` } });
+        const res = await fetch("/api/user?action=scans-remaining", { headers: { Authorization: `Bearer ${session.access_token}` } });
         const data = await res.json();
         if (!data.unlimited && typeof data.remaining === "number") {
           setScansUsed(Math.max(0, FREE_MONTHLY_LIMIT - data.remaining));

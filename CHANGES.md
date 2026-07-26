@@ -67,3 +67,46 @@
 - **`src/lib/types.ts`**: حقل جديد `retailerPrices?` في `AnalysisResult`، وثابت `SHOW_BTECH_COMPARISON` (حاليًا `false`).
 - **`src/components/ReportScreen.tsx`**: كومبوننت جديد `RetailerPriceComparison` يظهر تحت "Market Overview" لو فيه أكتر من متجر، بنفس ثيم الموقع (خلفية داكنة، amber/gold، RTL)، مع badge أخضر لأرخص سعر، وتنبيه واضح إن الأسعار "آخر سعر اتفحص" وممكن تتغير.
 - **`SETUP.md`**: توثيق env var اختياري جديد `SHOW_BTECH_COMPARISON`.
+
+## دفعة تعديلات جديدة (تجميع Serverless Functions + إصلاحات + ميزات)
+
+### 1. تقليل عدد Serverless Functions من 12 إلى 5 (حل مشكلة Build Failed على Vercel Hobby)
+- تم دمج 6 مسارات إدارية في ملف واحد `api/admin.ts` (يفرّع حسب `?action=requests|approve|reject|metrics|ai-costs|login`)
+  - الملفات المحذوفة: `api/admin/requests.ts`, `api/admin/approve.ts`, `api/admin/reject.ts`, `api/admin/metrics.ts`, `api/admin/ai-costs.ts`, `api/admin/login.ts`
+- تم دمج 3 مسارات مستخدم في ملف واحد `api/user.ts` (يفرّع حسب `?action=scans-remaining|compare|subscribe|classify-icon`)
+  - الملفات المحذوفة: `api/scans-remaining.ts`, `api/compare.ts`, `api/subscribe.ts`
+- الدوال المتبقية الآن: `api/analyze.ts`, `api/ask.ts`, `api/admin.ts`, `api/user.ts`, `api/cron/daily.ts` = **5 دوال فقط**
+- تم تحديث كل استدعاءات الـ fetch في الواجهة الأمامية (`InputScreen.tsx`, `ProfileScreen.tsx`, `CompareScreen.tsx`, `UpgradeScreen.tsx`, `AdminApp.tsx`) للمسارات الجديدة
+- **باج إضافي تم اكتشافه وإصلاحه:** متغير `COMPARE_MONTHLY_LIMIT` كان غير معرّف إطلاقاً في `api/compare.ts` القديم — كان سيسبب خطأ في كل عملية مقارنة ناجحة. تم تصحيحه لاستخدام `comparesLimit` الصحيح داخل `api/user.ts`.
+
+### 2. أيقونات ذكية بالذكاء الاصطناعي (Groq)
+- إضافة `classifyProductCategory()` في `api/_groq_tavily.ts` — استدعاء سريع وخفيف لنموذج Groq الأصغر (20b) لتصنيف اسم المنتج
+- إضافة action جديد `classify-icon` في `api/user.ts`
+- `src/lib/categoryIcons.ts`: إضافة `getIconByCategory()` لربط تصنيف Groq بأيقونة Lucide
+- `InputScreen.tsx`: الأيقونة المحلية الفورية تظهر أولاً دون أي تأخير، ثم تُستبدل (تُرقّى) بأيقونة أدق إذا رجع تصنيف Groq (مع debounce 500ms وقطع تلقائي بعد 4 ثواني كحد أقصى)
+
+### 3. سكريبت التفاوض — التعامل الصحيح مع الصفقة الممتازة
+- تعزيز تعليمات البرومبت في `api/analyze.ts` (negotiationScript) بدون أي تعديل على منطق حساب السعر العادل: عند كون العرض أقل من الحد الأدنى، يمتدح السكريبت الصفقة صراحة ولا يطلب خصم إضافي، ويطلب فقط التأكد من عدم كون الجهاز مسروقاً وعدم وجود عيب خفي
+
+### 4. مؤشر تحميل احترافي لزر "حلل القرار"
+- `InputScreen.tsx`: رسائل تفاعلية متغيرة كل 3.5 ثانية أثناء التحليل + Skeleton bars متحركة + الزر معطل تلقائياً أثناء التحميل (كان موجوداً ويظل معطلاً)
+
+### 5. إصلاح زر إرسال "اسأل المساعد الذكي"
+- الباج: `onClick={sendChat}` كان يمرر الـ click event نفسه كأول معامل (يستبدل نص السؤال)، ما يسبب خطأ صامت ويمنع أي استجابة
+- تم إصلاحه في 3 مواضع: `ReportScreen.tsx` و`InputScreen.tsx` (زر واحد لكل ملف)
+
+### 6. إصلاح صفحة "متابعاتي" (اختفاء البيانات + عودة المنتج بعد الحذف)
+- `WatchlistScreen.tsx`: تم التحقق من تسجيل الدخول عبر `session` (فوري) بدلاً من `user` (بروفايل يتأخر تحميله)، مع انتظار `authLoading` — يمنع التوجيه الخاطئ لصفحة الدخول والشاشة الفارغة المؤقتة
+- الحذف أصبح نهائياً (`DELETE`) بدلاً من soft-delete، مع التحقق الفعلي من نجاح الحذف عبر `.select()` بدل الثقة العمياء بغياب `error`
+- ملف SQL جديد: `supabase-watchlist-delete-policy-migration.sql` (سياسة RLS تسمح بالحذف الفعلي — **يجب تشغيله على قاعدة البيانات في Supabase**)
+
+### 7. ميزة PWA كاملة
+- ملفات جديدة: `public/manifest.json`, `public/favicon.svg`, `public/sw.js`, `public/icons/*.png`
+- `index.html`: ربط manifest + meta tags (theme-color, apple-touch-icon، إلخ)
+- `src/main.tsx`: تسجيل الـ Service Worker (يستثني كل `/api/*` من التخزين المؤقت حفاظاً على تحديث البيانات الحية)
+
+### ⚠️ لم يتم لمس أي كود يخص حساب "السعر العادل" (Fair Price Logic) إطلاقاً — بناءً على طلب صريح.
+
+### مطلوب منك بعد الرفع:
+1. شغّل ملف `supabase-watchlist-delete-policy-migration.sql` في Supabase SQL editor.
+2. تأكد إن متغيرات البيئة (`GROQ_API_KEY` إلخ) موجودة في Vercel — نفس الموجودة قبل كده، مفيش جديد.

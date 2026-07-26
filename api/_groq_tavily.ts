@@ -393,7 +393,48 @@ async function callCompoundModel(model: string, system: string, user: string, se
 }
 
 /**
- * The narrative/analysis call for api/analyze.ts — verdict, reasoning,
+ * Fast, tiny classification call for the "smart product icon" feature
+ * (InputScreen product-name field). Deliberately separate from
+ * callAnalysisModel/callAiWithFallback above:
+ * - Uses FALLBACK_MODEL (the smaller/faster 20b model) — this only needs to
+ *   pick one of a handful of categories, not reason deeply, so the smallest
+ *   capable model keeps latency low.
+ * - No web search at all (useSearch is simply never involved here) — the
+ *   category is obvious from the product name/description alone, and a
+ *   search would only add latency for zero benefit.
+ * - A very small max token budget + a system prompt of the strictest
+ *   `response_format: json_object` — keeps the round trip fast so the
+ *   frontend's instant local keyword-based icon (see categoryIcons.ts) is
+ *   never blocked; this call only *upgrades* the icon if/when it resolves.
+ */
+const ICON_CATEGORIES = [
+  "phone", "laptop", "headphones", "watch", "camera", "tv",
+  "console", "car", "shoes", "bag", "other",
+] as const;
+export type IconCategory = typeof ICON_CATEGORIES[number];
+
+export async function classifyProductCategory(productName: string): Promise<IconCategory> {
+  const trimmed = (productName || "").trim();
+  if (!trimmed) return "other";
+
+  const system =
+    "You classify a shopping product name into exactly one category. " +
+    `Valid categories: ${ICON_CATEGORIES.join(", ")}. ` +
+    'Respond with ONLY this JSON object: {"category": "<one of the valid categories>"}. ' +
+    "Text may be Arabic or English. If unsure, use \"other\". Never explain, never add extra fields.";
+
+  try {
+    const json = await callGroqModel(FALLBACK_MODEL, system, trimmed);
+    const parsed = JSON.parse(json.choices[0].message.content);
+    const category = String(parsed?.category || "").toLowerCase().trim();
+    return (ICON_CATEGORIES as readonly string[]).includes(category) ? (category as IconCategory) : "other";
+  } catch (e) {
+    console.error("[classifyProductCategory] Groq call failed, falling back to 'other':", e);
+    return "other";
+  }
+}
+
+
  * pros/cons, hidden risks, alternatives, negotiation script, resale value.
  * Deliberately does NOT run any Serper search and is NOT responsible for
  * deriving the fair price range itself: the caller must supply the

@@ -31,3 +31,14 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </ErrorBoundary>
   </React.StrictMode>
 )
+
+// Register the PWA service worker (app shell caching only — /api/* is
+// always excluded inside sw.js, so live analysis/chat/price data is never
+// served stale). Skipped in dev to avoid caching issues while iterating.
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("Service worker registration failed:", err)
+    })
+  })
+}

@@ -20,7 +20,7 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/admin/login", {
+      const res = await fetch("/api/admin?action=login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -101,7 +101,7 @@ function RequestsTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await adminFetch("/api/admin/requests");
+      const res = await adminFetch("/api/admin?action=requests");
       const data = await res.json();
       setRequests(data.requests || []);
     } finally {
@@ -116,7 +116,7 @@ function RequestsTab() {
   const approve = async (id: string) => {
     setBusyId(id);
     try {
-      await adminFetch("/api/admin/approve", { method: "POST", body: JSON.stringify({ requestId: id }) });
+      await adminFetch("/api/admin?action=approve", { method: "POST", body: JSON.stringify({ requestId: id }) });
       await load();
     } finally {
       setBusyId(null);
@@ -126,7 +126,7 @@ function RequestsTab() {
   const reject = async (id: string) => {
     setBusyId(id);
     try {
-      await adminFetch("/api/admin/reject", { method: "POST", body: JSON.stringify({ requestId: id, reason: rejectReason || undefined }) });
+      await adminFetch("/api/admin?action=reject", { method: "POST", body: JSON.stringify({ requestId: id, reason: rejectReason || undefined }) });
       setRejectReasonFor(null);
       setRejectReason("");
       await load();
@@ -235,7 +235,7 @@ function MetricsTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await adminFetch("/api/admin/metrics");
+      const res = await adminFetch("/api/admin?action=metrics");
       setData(await res.json());
     } finally {
       setLoading(false);
@@ -285,7 +285,7 @@ function CostsTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await adminFetch("/api/admin/ai-costs");
+      const res = await adminFetch("/api/admin?action=ai-costs");
       setData(await res.json());
     } finally {
       setLoading(false);
