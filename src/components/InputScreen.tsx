@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useApp } from "@/lib/AppContext";
 import { getCategoryIcon } from "@/lib/categoryIcons";
+import { AnalyzingStream } from "@/components/AnalyzingStream";
 import { getVariantChipGroups } from "@/lib/variantChips";
 import { currencies, FREE_MONTHLY_LIMIT } from "@/lib/types";
 import { getDemoReport } from "@/lib/analysisEngine";
@@ -461,6 +462,8 @@ export function InputScreen() {
               <><Sparkles className="h-4 w-4" /> {t("analyzeDecision")}</>
             )}
           </Button>
+
+          {loading && <AnalyzingStream lang={lang} />}
 
           {/* Compare Button */}
           <Button

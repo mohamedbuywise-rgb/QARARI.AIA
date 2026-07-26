@@ -1,8 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseAdmin } from "../_supabaseAdmin.js";
 import { sendEmail } from "../_resend.js";
-import { callAiWithFallback } from "../_groq_tavily.js";
-import { logAiUsage } from "../_costTracking.js";
+import { getFairPriceRange } from "../_groq_tavily.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep } from "../_logger.js";
 
 const FREE_MONTHLY_LIMIT = 50; // temporarily raised from 5 for testing
@@ -96,20 +95,16 @@ async function checkWatchlistPriceDrops(admin: any) {
 
   for (const row of batch) {
     try {
-      const prompt = `Research the CURRENT real market price for this product and return ONLY a JSON object: {"fairPriceMid": number}.
-PRODUCT: ${row.product}
-CURRENCY: ${row.currency}`;
+      const condition: "new" | "likeNew" | "used" =
+        row.condition === "used" ? "used" : row.condition === "likeNew" ? "likeNew" : "new";
 
-      const aiResult = await callAiWithFallback(prompt);
-      await logAiUsage(admin, {
-        endpoint: "cron_price_check",
-        model: aiResult.modelUsed,
-        tier: "premium",
-        userId: row.user_id,
-        usage: aiResult.usage,
-      });
-
-      const currentPrice = Number(aiResult.data?.fairPriceMid);
+      // Same pipeline api/analyze.ts uses for the report itself: Groq
+      // Compound first, falling back automatically to Serper + gpt-oss-120b
+      // if Compound errors out (e.g. the Free Tier's internal search-tool
+      // response-size limit) — so a watchlist check is exactly as accurate
+      // as the price the user saw when they added the item.
+      const priceRange = await getFairPriceRange(row.product, row.currency, condition, "");
+      const currentPrice = priceRange.mid;
       if (!currentPrice || Number.isNaN(currentPrice)) continue;
 
       await admin

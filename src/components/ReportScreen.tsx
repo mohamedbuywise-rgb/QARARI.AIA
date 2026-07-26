@@ -1,8 +1,8 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { FutureValueCard } from "@/components/FutureValueCard";
 import { useApp } from "@/lib/AppContext";
 import { supabase } from "@/lib/supabase";
-import { getCategoryIcon } from "@/lib/categoryIcons";
+import { getCategoryIcon, getIconForCategory } from "@/lib/categoryIcons";
 import { currencies, SHOW_BTECH_COMPARISON } from "@/lib/types";
 import type { Verdict } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -98,6 +98,7 @@ export function ReportScreen() {
   const [negVariant, setNegVariant] = useState<"polite" | "firm">("polite");
   const [showCompareInput, setShowCompareInput] = useState(false);
   const [compareProduct, setCompareProduct] = useState("");
+  const [watchSaving, setWatchSaving] = useState(false);
   const recognitionRef = useRef<any>(null);
 
   const report = currentReport;
@@ -144,7 +145,62 @@ export function ReportScreen() {
   };
   const vc = verdictConfig[report.verdict] ?? verdictConfig.fair;
 
-  const ProductIcon = useMemo(() => getCategoryIcon(report.product), [report.product]);
+  const [iconCategory, setIconCategory] = useState<string | null>(null);
+  const ProductIcon = useMemo(
+    () => getIconForCategory(iconCategory, report.product),
+    [iconCategory, report.product]
+  );
+
+  // Dynamic product icon: ask Groq to classify the product into a fixed
+  // icon category once per report. Runs independently of the analysis
+  // pipeline (api/icon.ts, no pricing involved) — if it fails or is slow,
+  // ProductIcon above just keeps using the local keyword-based guess.
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchIcon() {
+      if (isExample) return;
+      try {
+        const res = await fetch("/api/icon", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ product: report.product }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && typeof data.category === "string") setIconCategory(data.category);
+      } catch {
+        // Cosmetic only — silently keep the local fallback icon.
+      }
+    }
+    fetchIcon();
+    return () => { cancelled = true; };
+  }, [report.id, report.product, isExample]);
+
+  // Notify-me toggle must reflect the REAL saved state, not just whatever
+  // happened in this component instance. Without this check, isWatched
+  // always started at false — so reopening the same report (after a reload,
+  // or navigating back from history) showed "Notify Me" as available again
+  // even though a watchlist row already existed, letting a person queue up
+  // duplicate price-drop rows for the exact same product/price/currency.
+  useEffect(() => {
+    let cancelled = false;
+    async function checkExistingWatch() {
+      if (isExample || !session?.user) return;
+      const { data, error } = await supabase
+        .from("watchlist")
+        .select("id")
+        .eq("user_id", session.user.id)
+        .eq("product", report.product)
+        .eq("saved_price", report.offeredPrice)
+        .eq("currency", report.currency)
+        .eq("active", true)
+        .limit(1);
+      if (!cancelled && !error && data && data.length > 0) setIsWatched(true);
+    }
+    checkExistingWatch();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report.id, report.product, report.offeredPrice, report.currency, session?.user?.id, isExample]);
 
   const handleSave = () => {
     requireAuth(async () => {
@@ -728,25 +784,31 @@ export function ReportScreen() {
         <Button
           onClick={() => {
             requireAuth(async () => {
-              if (!session?.user) return;
-              const { error } = await supabase.from("watchlist").insert({
-                user_id: session.user.id,
-                product: report.product,
-                saved_price: report.offeredPrice,
-                currency: report.currency,
-              });
-              if (error) {
-                // Was previously ignored, so the toast below fired even when
-                // the insert failed and nothing was actually saved.
-                console.error("Save to watchlist failed:", error);
-                showToast(lang === "ar" ? "حصل خطأ، حاول تاني" : "Something went wrong, please try again");
-                return;
+              if (!session?.user || watchSaving) return;
+              setWatchSaving(true);
+              try {
+                const { error } = await supabase.from("watchlist").insert({
+                  user_id: session.user.id,
+                  product: report.product,
+                  saved_price: report.offeredPrice,
+                  currency: report.currency,
+                  condition: report.condition || "new",
+                });
+                if (error) {
+                  // Was previously ignored, so the toast below fired even when
+                  // the insert failed and nothing was actually saved.
+                  console.error("Save to watchlist failed:", error);
+                  showToast(lang === "ar" ? "حصل خطأ، حاول تاني" : "Something went wrong, please try again");
+                  return;
+                }
+                setIsWatched(true);
+                showToast(t("notifyPriceDrop") + " ✓");
+              } finally {
+                setWatchSaving(false);
               }
-              setIsWatched(true);
-              showToast(t("notifyPriceDrop") + " ✓");
             });
           }}
-          disabled={isWatched}
+          disabled={isWatched || watchSaving}
           variant="outline"
           className="border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-amber-400 disabled:opacity-50"
         >
@@ -877,7 +939,7 @@ export function ReportScreen() {
                   <Mic className="h-5 w-5" />
                 </button>
                 <button
-                  onClick={sendChat}
+                  onClick={() => sendChat()}
                   disabled={chatLoading || (chatLimitHit && !isExample) || !chatInput.trim()}
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-600 text-black hover:brightness-110 disabled:opacity-50"
                 >

@@ -45,3 +45,29 @@ export function getCategoryIcon(productName: string): IconComponent {
   }
   return Package;
 }
+
+// Maps the closed category set returned by api/icon.ts (Groq classification)
+// to the same icon set above. Keeping this separate from getCategoryIcon
+// means the live-typing icon on the input form (no API call yet) and the
+// server-classified icon on the report page (after a real Groq call) can
+// each use the lookup that actually applies to them.
+const iconCategoryMap: Record<string, IconComponent> = {
+  phone: Smartphone,
+  laptop: Laptop,
+  watch: Watch,
+  headphones: Headphones,
+  camera: Camera,
+  tv: Tv,
+  car: Car,
+  shoes: Footprints,
+  bag: ShoppingBag,
+  console: Gamepad2,
+  other: Package,
+};
+
+// productName is used as a fallback so the icon never regresses to a plain
+// box while the Groq classification request is still in flight or failed.
+export function getIconForCategory(category: string | null | undefined, productName: string): IconComponent {
+  if (category && iconCategoryMap[category]) return iconCategoryMap[category];
+  return getCategoryIcon(productName);
+}
