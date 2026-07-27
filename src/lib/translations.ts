@@ -192,6 +192,7 @@ export const translations: Record<Language, Record<string, string>> = {
     installIosStep1: "اضغط على زر المشاركة",
     installIosStep2: "ثم اختر \"إضافة إلى الشاشة الرئيسية\"",
     installHeaderHint: "ثبّت تطبيق قراري على شاشتك الرئيسية",
+    installManualHint: "افتح قائمة المتصفح (⋮) بالأعلى واختر \"تثبيت التطبيق\" أو \"إضافة إلى الشاشة الرئيسية\"",
   },
   en: {
     appName: "Qarari.AI",
@@ -384,5 +385,6 @@ export const translations: Record<Language, Record<string, string>> = {
     installIosStep1: "Tap the Share button",
     installIosStep2: "Then choose \"Add to Home Screen\"",
     installHeaderHint: "Install the Qarari app on your home screen",
+    installManualHint: "Open the browser menu (⋮) at the top and choose \"Install app\" or \"Add to Home screen\"",
   },
 };

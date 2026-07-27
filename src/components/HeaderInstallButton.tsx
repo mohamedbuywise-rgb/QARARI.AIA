@@ -35,10 +35,19 @@ export function HeaderInstallButton() {
 
     const unsubscribe = onInstallPromptChange((prompt) => {
       setDeferredPrompt(prompt);
-      if (!prompt) setInstalled(true);
     });
 
-    return unsubscribe;
+    // Only the real "appinstalled" event should hide the button going
+    // forward — not merely "no captured prompt yet", which used to cause
+    // the button to disappear (or never appear) on every load before
+    // `beforeinstallprompt` had fired.
+    const handleInstalled = () => setInstalled(true);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
   }, []);
 
   const dismissDot = useCallback(() => {
@@ -59,12 +68,17 @@ export function HeaderInstallButton() {
       return;
     }
 
-    // iOS (or any browser without a native prompt yet): explain instead.
+    // No native prompt captured yet (iOS always lacks one; Android/desktop
+    // Chrome may just not have fired `beforeinstallprompt` yet). Either way,
+    // the button stays visible and instead shows manual steps.
     setShowTooltip((v) => !v);
-    window.setTimeout(() => setShowTooltip(false), 4000);
+    window.setTimeout(() => setShowTooltip(false), 6000);
   };
 
-  if (installed || isStandalone() || (!deferredPrompt && !iosEligible)) return null;
+  // The button is always visible unless the app is already installed/running
+  // standalone — it no longer hides itself while waiting on Chrome's
+  // `beforeinstallprompt` event.
+  if (installed || isStandalone()) return null;
 
   return (
     <div className="relative">
@@ -87,7 +101,9 @@ export function HeaderInstallButton() {
             dir === "rtl" ? "right-0" : "left-0"
           }`}
         >
-          {t("installHeaderHint")}
+          {iosEligible
+            ? `${t("installIosStep1")} — ${t("installIosStep2")}`
+            : t("installManualHint")}
         </div>
       )}
     </div>
