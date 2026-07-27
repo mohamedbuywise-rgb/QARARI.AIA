@@ -1,6 +1,7 @@
 import { AppProvider } from "@/lib/AppContext";
 import { Header } from "@/components/Header";
 import { Toast } from "@/components/Toast";
+import { InstallBanner } from "@/components/InstallBanner";
 import { DecisionInput } from "@/components/DecisionInput";
 import { ReportScreen } from "@/components/ReportScreen";
 import { HistoryScreen } from "@/components/HistoryScreen";
@@ -60,6 +61,7 @@ export default function App() {
           </footer>
         </div>
         <Toast />
+        <InstallBanner />
       </div>
     </AppProvider>
   );
