@@ -9,6 +9,7 @@ import {
   getRegionForCurrency,
   type FairPriceRange,
 } from "./_groq_tavily.js";
+import { wrapNoonLinks, wrapNoonLinksInAlternatives } from "./_affiliateLinks.js";
 import { logAiUsage } from "./_costTracking.js";
 import { logRequestStart, logRequestSuccess, logUnhandledError, logStep, logEnvPresence } from "./_logger.js";
 import { FREE_TIER_LIMITS, DEFAULT_PREMIUM_LIMITS } from "./_planConfig.js";
@@ -438,6 +439,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // analysis on future cache hits too.
       try {
         parsed.retailerPrices = await fetchMainProductRetailerLinks(product, currency, cond);
+        // Noon-only, url-only swap-in of the cached affiliate link. Never
+        // touches marketFairPrice* or any other field on `parsed`.
+        parsed.retailerPrices = await wrapNoonLinks(parsed.retailerPrices);
       } catch (e) {
         console.error("[/api/analyze] Building retailer search links failed (non-fatal):", e);
         parsed.retailerPrices = [];
@@ -461,6 +465,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             region,
             cond
           );
+          parsed.betterAlternatives = await wrapNoonLinksInAlternatives(parsed.betterAlternatives);
         } catch (e) {
           console.error("[/api/analyze] Researching alternative prices failed (non-fatal):", e);
           parsed.betterAlternatives = attachSearchLinksToAlternatives(parsed.betterAlternatives, currency);
