@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "@/lib/AppContext";
 import { Globe, History, User, Sparkles, Plus, GitCompare, HelpCircle, Bot, Zap, Bell } from "lucide-react";
+import { HeaderInstallButton } from "@/components/HeaderInstallButton";
 
 export function Header() {
   const { lang, setLang, t, navigate, screen, isPremium, user } = useApp();
@@ -22,7 +23,7 @@ export function Header() {
         </button>
 
         <div className="flex items-center gap-1.5">
-
+          <HeaderInstallButton />
 
           <button
             onClick={() => navigate("input")}

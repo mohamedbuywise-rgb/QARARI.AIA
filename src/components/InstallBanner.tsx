@@ -1,6 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { Sparkles, X, Share } from "lucide-react";
 import { useApp } from "@/lib/AppContext";
+import {
+  onInstallPromptChange,
+  clearDeferredPrompt,
+  isStandalone,
+  isIos,
+  type BeforeInstallPromptEvent,
+} from "@/lib/pwaInstall";
 
 // Custom PWA install banner.
 // - Android/Chrome & desktop Chrome: captures `beforeinstallprompt` and shows
@@ -15,22 +22,6 @@ const DISMISS_KEY = "qarari-install-dismissed-at";
 const AUTO_HIDE_MS = 30_000;
 const RESHOW_AFTER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const APPEAR_DELAY_MS = 2_500;
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-}
-
-function isStandalone() {
-  return (
-    window.matchMedia?.("(display-mode: standalone)").matches ||
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true
-  );
-}
-
-function isIos() {
-  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
-}
 
 function wasRecentlyDismissed() {
   const raw = localStorage.getItem(DISMISS_KEY);
@@ -66,19 +57,22 @@ export function InstallBanner() {
       }, APPEAR_DELAY_MS);
     };
 
-    const onBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      scheduleShow();
-    };
-
-    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-
-    const onInstalled = () => {
-      localStorage.setItem(DISMISS_KEY, String(Date.now()));
-      setVisible(false);
-    };
-    window.addEventListener("appinstalled", onInstalled);
+    // Subscribe to the centrally-captured prompt (fires immediately with the
+    // current value if `beforeinstallprompt` already happened earlier during
+    // page load — e.g. while the splash screen was still showing).
+    let hasScheduled = false;
+    const unsubscribe = onInstallPromptChange((prompt) => {
+      setDeferredPrompt(prompt);
+      if (prompt && !hasScheduled) {
+        hasScheduled = true;
+        scheduleShow();
+      }
+      if (!prompt) {
+        // appinstalled fired
+        localStorage.setItem(DISMISS_KEY, String(Date.now()));
+        setVisible(false);
+      }
+    });
 
     // iOS Safari never fires beforeinstallprompt — show instructions instead.
     if (isIos()) {
@@ -87,8 +81,7 @@ export function InstallBanner() {
     }
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
+      unsubscribe();
       window.clearTimeout(appearTimer);
       window.clearTimeout(hideTimer);
     };
@@ -102,6 +95,7 @@ export function InstallBanner() {
     if (outcome === "accepted") {
       localStorage.setItem(DISMISS_KEY, String(Date.now()));
     }
+    clearDeferredPrompt();
     setDeferredPrompt(null);
     dismiss();
   };

@@ -1,5 +1,9 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
+// IMPORTANT: import this before anything else so its top-level
+// `beforeinstallprompt` listener is attached the instant this script
+// evaluates — not after the ~8.6s SplashScreen finishes and mounts <App/>.
+import "@/lib/pwaInstall"
 import App from "./App.tsx"
 import AdminApp from "./admin/AdminApp.tsx"
 import { SplashScreen, shouldShowSplash } from "@/components/SplashScreen"
